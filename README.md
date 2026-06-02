@@ -19,7 +19,7 @@
 | A股（北证） | `bj` + 代码 | `bj830799` | 腾讯行情 |
 | 港股 | `hk` + 代码 | `hk00700` | 腾讯行情 |
 | 美股 | `usr_` + 代码 | `usr_aapl` | Yahoo Finance |
-| 加密货币 | `crypto:` + 交易对 | `crypto:BTCUSDT` | Bybit 官方 API |
+| 加密货币 | `crypto:` + 交易对 | `crypto:BTCUSDT` | OKX 官方 API |
 
 ## 安装
 
