@@ -1,0 +1,110 @@
+{
+  "name": "stock-bar-monitor",
+  "displayName": "Stock Bar Monitor",
+  "description": "轻量级股票/加密货币状态栏监控",
+  "version": "0.1.0",
+  "publisher": "bangyuan",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.84.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "stock-bar.refresh",
+        "title": "Stock Bar: 立即刷新行情"
+      },
+      {
+        "command": "stock-bar.openSettings",
+        "title": "Stock Bar: 打开设置"
+      },
+      {
+        "command": "stock-bar.addCode",
+        "title": "Stock Bar: 添加监控品种"
+      },
+      {
+        "command": "stock-bar.removeCode",
+        "title": "Stock Bar: 移除监控品种"
+      }
+    ],
+    "configuration": {
+      "title": "Stock Bar Monitor",
+      "properties": {
+        "stock-bar.codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "sh000001",
+            "sh601899"
+          ],
+          "description": "监控的品种代码列表。A股：sh/sz前缀（如 sh000001）；港股：hk前缀（如 hk00700）；美股：usr_前缀（如 usr_aapl）；加密货币：crypto:前缀（如 crypto:BTCUSDT）"
+        },
+        "stock-bar.interval": {
+          "type": "number",
+          "default": 5,
+          "minimum": 3,
+          "description": "行情刷新间隔（秒）"
+        },
+        "stock-bar.format": {
+          "type": "string",
+          "default": "${icon}${name} ${price}",
+          "description": "状态栏显示模板。支持占位符：${icon} ${name} ${price} ${change} ${percent} ${code}"
+        },
+        "stock-bar.precision": {
+          "type": "object",
+          "default": {},
+          "description": "每个品种的小数点位数的覆盖设置。key为品种代码，value为小数位数。用 \"default\" 设置全局默认值。示例：{\"sh000001\": 2, \"crypto:BTCUSDT\": 0, \"default\": 2}",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "stock-bar.maxItems": {
+          "type": "number",
+          "default": 6,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "状态栏最多同时显示的品种数量"
+        },
+        "stock-bar.riseColor": {
+          "type": "string",
+          "default": "#cc5555",
+          "description": "上涨时的文字颜色（CSS颜色值），中国习惯红色上涨"
+        },
+        "stock-bar.fallColor": {
+          "type": "string",
+          "default": "#4a9e4a",
+          "description": "下跌时的文字颜色（CSS颜色值），中国习惯绿色下跌"
+        },
+        "stock-bar.flatColor": {
+          "type": "string",
+          "default": "",
+          "description": "平盘时的文字颜色（留空使用默认颜色）"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/iconv-lite": "0.0.1",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.84.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "iconv-lite": "^0.6.3"
+  }
+}

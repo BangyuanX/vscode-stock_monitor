@@ -1,0 +1,137 @@
+/** 单个品种的行情数据（统一格式，无论来源） */
+export interface StockData {
+  code: string;
+  name: string;
+  price: number;
+  change: number;        // 涨跌额
+  changePercent: number; // 涨跌幅（如 -0.88）
+  high: number;          // 最高价
+  low: number;           // 最低价
+  open: number;          // 开盘价
+  yestclose: number;     // 昨收价
+  time: string;          // 行情时间
+}
+
+/** 格式化后的展示数据 */
+export interface TickerDisplay {
+  code: string;
+  name: string;
+  price: string;
+  change: string;
+  percent: string;
+  icon: string;
+}
+
+/** 支持的模板占位符 */
+export type FormatField = 'icon' | 'name' | 'price' | 'change' | 'percent' | 'code';
+
+/** 品种类型 */
+export type TickerType = 'stock' | 'crypto';
+
+/** 解析后的配置 */
+export interface AppConfig {
+  stockCodes: string[];        // 股票代码（sh/sz/hk/usr_）
+  cryptoSymbols: string[];     // 加密货币交易对（BTCUSDT）
+  interval: number;            // 刷新间隔（秒）
+  format: string;              // 模板字符串
+  formatFields: FormatField[]; // 模板中使用的字段
+  maxItems: number;
+  riseColor: string;
+  fallColor: string;
+  flatColor: string;
+  precision: Record<string, number>; // 代码 → 小数位数
+  defaultPrecision: number;          // 默认小数位数
+}
+
+/** 标准化的模板占位符配置（用于构建格式化输出） */
+export const FORMAT_FIELDS: Record<FormatField, string> = {
+  icon: '${icon}',
+  name: '${name}',
+  price: '${price}',
+  change: '${change}',
+  percent: '${percent}',
+  code: '${code}',
+};
+
+/** 将同比变化量映射为涨跌图标 */
+export function getIcon(change: number): string {
+  if (change > 0) return '📈';
+  if (change < 0) return '📉';
+  return '➡️';
+}
+
+/** 格式化数值（自动处理小数位数，可选覆盖） */
+export function formatPrice(price: number, precision?: number): string {
+  if (precision !== undefined) return price.toFixed(precision);
+  // 自动判断：高价（>100）2位，中价（>1）3位，低价（<1）4位
+  if (price >= 100) return price.toFixed(2);
+  if (price >= 1) return price.toFixed(3);
+  return price.toFixed(4);
+}
+
+/** 格式化涨跌额，带正负号 */
+export function formatChange(change: number): string {
+  return (change > 0 ? '+' : '') + change.toFixed(2);
+}
+
+/** 格式化涨跌幅，带正负号和百分号 */
+export function formatPercent(percent: number): string {
+  return (percent > 0 ? '+' : '') + percent.toFixed(2) + '%';
+}
+
+/** 格式化所有字段为显示对象 */
+export function formatTicker(data: StockData, precision?: number): TickerDisplay {
+  return {
+    code: data.code,
+    name: data.name,
+    price: formatPrice(data.price, precision),
+    change: formatChange(data.change),
+    percent: formatPercent(data.changePercent),
+    icon: getIcon(data.change),
+  };
+}
+
+/** 按模板格式化显示文本 */
+export function applyFormat(template: string, display: TickerDisplay): string {
+  return template
+    .replace(/\$\{icon\}/g, display.icon)
+    .replace(/\$\{name\}/g, display.name)
+    .replace(/\$\{price\}/g, display.price)
+    .replace(/\$\{change\}/g, display.change)
+    .replace(/\$\{percent\}/g, display.percent)
+    .replace(/\$\{code\}/g, display.code);
+}
+
+/** 从模板字符串中提取使用的字段 */
+export function extractFormatFields(template: string): FormatField[] {
+  const fields: FormatField[] = [];
+  const fieldMap: [RegExp, FormatField][] = [
+    [/\$\{icon\}/g, 'icon'],
+    [/\$\{name\}/g, 'name'],
+    [/\$\{price\}/g, 'price'],
+    [/\$\{change\}/g, 'change'],
+    [/\$\{percent\}/g, 'percent'],
+    [/\$\{code\}/g, 'code'],
+  ];
+  for (const [re, field] of fieldMap) {
+    re.lastIndex = 0;
+    if (re.test(template)) {
+      fields.push(field);
+    }
+  }
+  return fields;
+}
+
+/** 构建悬停提示文本 */
+export function buildTooltip(data: StockData): string {
+  const icon = getIcon(data.change);
+  return [
+    `${data.name}（${data.code}）`,
+    `---`,
+    `${icon} 现价: ${formatPrice(data.price)}`,
+    `  涨跌: ${formatChange(data.change)}（${formatPercent(data.changePercent)}）`,
+    `  今开: ${formatPrice(data.open)}  昨收: ${formatPrice(data.yestclose)}`,
+    `  最高: ${formatPrice(data.high)}  最低: ${formatPrice(data.low)}`,
+    `  时间: ${data.time}`,
+  ].join('\n');
+}
