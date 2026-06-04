@@ -1,3 +1,6 @@
+/** 交易时段 */
+export type MarketState = 'PRE' | 'REGULAR' | 'POST' | 'CLOSED';
+
 /** 单个品种的行情数据（统一格式，无论来源） */
 export interface StockData {
   code: string;
@@ -10,6 +13,7 @@ export interface StockData {
   open: number;          // 开盘价
   yestclose: number;     // 昨收价
   time: string;          // 行情时间
+  marketState?: MarketState; // 交易时段（盘前/盘中/盘后）
 }
 
 /** 格式化后的展示数据 */
@@ -20,10 +24,11 @@ export interface TickerDisplay {
   change: string;
   percent: string;
   icon: string;
+  session: string;    // 交易时段标记（🌅/🌙/空）
 }
 
 /** 支持的模板占位符 */
-export type FormatField = 'icon' | 'name' | 'price' | 'change' | 'percent' | 'code';
+export type FormatField = 'icon' | 'name' | 'price' | 'change' | 'percent' | 'code' | 'session';
 
 /** 品种类型 */
 export type TickerType = 'stock' | 'crypto';
@@ -51,7 +56,15 @@ export const FORMAT_FIELDS: Record<FormatField, string> = {
   change: '${change}',
   percent: '${percent}',
   code: '${code}',
+  session: '${session}',
 };
+
+/** 获取交易时段图标 */
+export function getSessionIcon(state?: MarketState): string {
+  if (state === 'PRE') return '🌅';
+  if (state === 'POST') return '🌙';
+  return '';
+}
 
 /** 将同比变化量映射为涨跌图标 */
 export function getIcon(change: number): string {
@@ -88,6 +101,7 @@ export function formatTicker(data: StockData, precision?: number): TickerDisplay
     change: formatChange(data.change),
     percent: formatPercent(data.changePercent),
     icon: getIcon(data.change),
+    session: getSessionIcon(data.marketState),
   };
 }
 
@@ -99,7 +113,8 @@ export function applyFormat(template: string, display: TickerDisplay): string {
     .replace(/\$\{price\}/g, display.price)
     .replace(/\$\{change\}/g, display.change)
     .replace(/\$\{percent\}/g, display.percent)
-    .replace(/\$\{code\}/g, display.code);
+    .replace(/\$\{code\}/g, display.code)
+    .replace(/\$\{session\}/g, display.session);
 }
 
 /** 从模板字符串中提取使用的字段 */
@@ -112,6 +127,7 @@ export function extractFormatFields(template: string): FormatField[] {
     [/\$\{change\}/g, 'change'],
     [/\$\{percent\}/g, 'percent'],
     [/\$\{code\}/g, 'code'],
+    [/\$\{session\}/g, 'session'],
   ];
   for (const [re, field] of fieldMap) {
     re.lastIndex = 0;
@@ -125,13 +141,23 @@ export function extractFormatFields(template: string): FormatField[] {
 /** 构建悬停提示文本 */
 export function buildTooltip(data: StockData): string {
   const icon = getIcon(data.change);
-  return [
+  const lines = [
     `${data.name}（${data.code}）`,
     `---`,
-    `${icon} 现价: ${formatPrice(data.price)}`,
-    `  涨跌: ${formatChange(data.change)}（${formatPercent(data.changePercent)}）`,
-    `  今开: ${formatPrice(data.open)}  昨收: ${formatPrice(data.yestclose)}`,
-    `  最高: ${formatPrice(data.high)}  最低: ${formatPrice(data.low)}`,
-    `  时间: ${data.time}`,
-  ].join('\n');
+  ];
+
+  if (data.marketState && data.marketState !== 'REGULAR') {
+    const stateLabel = data.marketState === 'PRE' ? '盘前' : '盘后';
+    lines.push(`📊 ${stateLabel} ${icon} 现价: ${formatPrice(data.price)}`);
+    lines.push(`  涨跌: ${formatChange(data.change)}（${formatPercent(data.changePercent)}）`);
+    lines.push(`  昨收: ${formatPrice(data.yestclose)}`);
+  } else {
+    lines.push(`${icon} 现价: ${formatPrice(data.price)}`);
+    lines.push(`  涨跌: ${formatChange(data.change)}（${formatPercent(data.changePercent)}）`);
+    lines.push(`  今开: ${formatPrice(data.open)}  昨收: ${formatPrice(data.yestclose)}`);
+    lines.push(`  最高: ${formatPrice(data.high)}  最低: ${formatPrice(data.low)}`);
+  }
+
+  lines.push(`  时间: ${data.time}`);
+  return lines.join('\n');
 }

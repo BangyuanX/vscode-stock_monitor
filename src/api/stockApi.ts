@@ -26,8 +26,12 @@ const STOCK_LINE_RE = /v_([a-z0-9_]+)="([^"]*)"/g;
 // 数据源 2: Yahoo Finance API (公开免费，无需 API Key)
 // 适用于: 美股(usr_)
 //
-// 请求: GET https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1d&range=1d
-// 响应: JSON, 含 meta.regularMarketPrice, meta.chartPreviousClose 等
+// 请求: GET https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=30m&range=2d&includePrePost=true
+// 响应: JSON, 30分钟K线 + meta元数据
+//       用 indicators 中最后一根有效 K 线的 close 作为最新价（覆盖盘后休市后数据）
+//       带 includePrePost=true 时 meta 额外返回:
+//       - meta.preMarketPrice   (盘前价，美东 4:00-9:30)
+//       - meta.postMarketPrice  (盘后价，美东 16:00-20:00)
 // ============================================================
 
 /** Tencent 支持的股票前缀 */
@@ -154,7 +158,7 @@ async function fetchFromYahoo(symbols: string[]): Promise<Map<string, StockData>
   // Yahoo 不支持批量查询，串行获取
   for (const symbol of symbols) {
     try {
-      const path = `/v8/finance/chart/${symbol}?interval=1d&range=1d`;
+      const path = `/v8/finance/chart/${symbol}?interval=30m&range=2d&includePrePost=true`;
       const { data } = await smartGetJson('query1.finance.yahoo.com', path, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
         timeoutMs: 10000,
@@ -186,6 +190,16 @@ interface YahooChartResponse {
         regularMarketDayHigh: number;
         regularMarketDayLow: number;
         regularMarketTime: number;
+        /** 盘前价（盘前时段存在） */
+        preMarketPrice?: number;
+        /** 盘前时间戳 */
+        preMarketTime?: number;
+        /** 盘后价（盘后时段存在） */
+        postMarketPrice?: number;
+        /** 盘后时间戳 */
+        postMarketTime?: number;
+        /** 市场状态 */
+        marketState?: string;
       };
       timestamp: number[];
       indicators: {
@@ -209,27 +223,53 @@ function parseYahooResponse(symbol: string, raw: YahooChartResponse): StockData 
   }
 
   const meta = raw.chart.result[0].meta;
+  const timestamps = raw.chart.result[0].timestamp;
   const quote = raw.chart.result[0].indicators.quote[0];
-
-  const price = meta.regularMarketPrice;
   const yestclose = meta.chartPreviousClose;
 
-  if (isNaN(price) || isNaN(yestclose)) return null;
+  if (isNaN(yestclose)) return null;
+
+  // 从 K 线 indicators 中找到最新有效 close（盘中/盘后/休市后都能拿到最新价）
+  let price = meta.regularMarketPrice;
+  let time: string = '';
+  let open = price;
+  let marketState: StockData['marketState'] = 'REGULAR';
+
+  if (timestamps && quote.close && quote.close.length > 0) {
+    // 从后往前找第一个有效 close
+    for (let i = timestamps.length - 1; i >= 0; i--) {
+      const close = quote.close[i];
+      if (close != null && !isNaN(close)) {
+        price = close;
+        const ts = timestamps[i];
+        time = ts ? new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false }) : '';
+        break;
+      }
+    }
+    // 从前往后找当天第一个有效 open（约30根 K 线一个交易日）
+    const DAY_CANDLES = 35;
+    const todayStart = Math.max(0, timestamps.length - DAY_CANDLES);
+    for (let i = todayStart; i < timestamps.length; i++) {
+      if (quote.open[i] != null && !isNaN(quote.open[i])) {
+        open = quote.open[i];
+        break;
+      }
+    }
+  }
+
+  if (isNaN(price)) return null;
+
+  // 交易时段判断：meta 中的 preMarketPrice/postMarketPrice 仅在对应扩展时段活跃时存在
+  if (meta.preMarketPrice != null && !isNaN(meta.preMarketPrice)) {
+    marketState = 'PRE';
+  } else if (meta.postMarketPrice != null && !isNaN(meta.postMarketPrice)) {
+    marketState = 'POST';
+  }
 
   const change = price - yestclose;
   const changePercent = yestclose > 0 ? (change / yestclose) * 100 : 0;
-
-  // 取最新一条 K 线的开盘价
-  const lastIdx = quote.open.length - 1;
-  const open = lastIdx >= 0 ? (quote.open[lastIdx] || price) : price;
-
   const high = meta.regularMarketDayHigh || price;
   const low = meta.regularMarketDayLow || price;
-
-  // 格式化时间
-  const time = meta.regularMarketTime
-    ? new Date(meta.regularMarketTime * 1000).toLocaleString('zh-CN', { hour12: false })
-    : '';
 
   return {
     code: symbol,
@@ -242,6 +282,7 @@ function parseYahooResponse(symbol: string, raw: YahooChartResponse): StockData 
     open,
     yestclose,
     time,
+    marketState,
   };
 }
 
