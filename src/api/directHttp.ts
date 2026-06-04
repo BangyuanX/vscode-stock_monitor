@@ -61,14 +61,34 @@ function parseProxyUrl(url: string): ProxyConfig | null {
 // 内部：读取 VSCode 代理设置
 // ============================================================
 
+/**
+ * 读取代理设置，优先级：
+ *   1. VSCode 设置 http.proxy（显式用户配置）
+ *   2. 环境变量（Clash 等代理工具自动设置）
+ *
+ * 这样用户在家用 Clash 时无需配 VSCode，在公司无代理时自动直连。
+ */
 function getVscodeProxy(): ProxyConfig | null {
+  // Priority 1: VSCode http.proxy setting（显式配置）
   try {
     const proxyUrl = vscode.workspace.getConfiguration('http').get<string>('proxy');
-    if (!proxyUrl) return null;
-    return parseProxyUrl(proxyUrl);
+    if (proxyUrl) return parseProxyUrl(proxyUrl);
   } catch {
-    return null;
+    // VSCode API 不可用时忽略（比如测试环境）
   }
+
+  // Priority 2: 环境变量（Clash / ClashX / 系统代理自动设置）
+  const envVar =
+    process.env.HTTPS_PROXY ||
+    process.env.https_proxy ||
+    process.env.HTTP_PROXY ||
+    process.env.http_proxy ||
+    process.env.ALL_PROXY ||
+    process.env.all_proxy;
+
+  if (envVar) return parseProxyUrl(envVar);
+
+  return null;
 }
 
 // ============================================================

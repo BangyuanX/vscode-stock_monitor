@@ -1,5 +1,5 @@
 import { StockData } from '../types';
-import { smartGetText, smartGetJson } from './directHttp';
+import { smartGetText } from './directHttp';
 
 // ============================================================
 // 数据源 1: 腾讯行情 API (qt.gtimg.cn)
@@ -158,11 +158,21 @@ async function fetchFromYahoo(symbols: string[]): Promise<Map<string, StockData>
   // Yahoo 不支持批量查询，串行获取
   for (const symbol of symbols) {
     try {
-      const path = `/v8/finance/chart/${symbol}?interval=30m&range=2d&includePrePost=true`;
-      const { data } = await smartGetJson('query1.finance.yahoo.com', path, {
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        timeoutMs: 10000,
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=30m&range=2d&includePrePost=true`;
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          Accept: 'application/json, text/plain, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          Referer: 'https://finance.yahoo.com/',
+          Origin: 'https://finance.yahoo.com',
+        },
+        signal: AbortSignal.timeout(10000),
       });
+
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
 
       const parsed = parseYahooResponse(symbol, data);
       if (parsed) result.set(symbol, parsed);

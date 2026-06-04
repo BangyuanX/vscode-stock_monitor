@@ -1,14 +1,12 @@
 import { StockData } from '../types';
-import { smartGetJson } from './directHttp';
 
 /**
  * OKX 公开行情 API
  *
- * 使用原始 TLS 套接字直接请求，避免 VSCode 扩展宿主的代理拦截。
+ * 使用 fetch() 请求，自动遵循 VSCode 代理设置和环境变量。
+ * 双环境兼容：在家走 Clash 代理，在公司直连 OKX。
  * GET https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT
  */
-
-const OKX_API_HOST = 'www.okx.com';
 
 /** 并行请求限制 */
 const MAX_CONCURRENCY = 5;
@@ -50,7 +48,21 @@ async function fetchSingle(symbol: string): Promise<StockData | null> {
   try {
     // OKX 使用 BTC-USDT 格式（短横线分隔）
     const okxSymbol = symbol.replace(/(USDT|USDC|BUSD|FDUSD|DAI|TUSD)$/, '-$1');
-    const { data: json } = await smartGetJson(OKX_API_HOST,`/api/v5/market/ticker?instId=${okxSymbol}`);
+    const url = `https://www.okx.com/api/v5/market/ticker?instId=${okxSymbol}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        Accept: 'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        Referer: 'https://www.okx.com/',
+        Origin: 'https://www.okx.com',
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const json = await response.json();
 
     if (json.code !== '0') {
       console.warn(`[StockBar] OKX ${symbol}: ${json.msg || 'err'}`);
