@@ -1,5 +1,5 @@
-import * as iconv from 'iconv-lite';
 import { StockData } from '../types';
+import { smartGetText, smartGetJson } from './directHttp';
 
 // ============================================================
 // 数据源 1: 腾讯行情 API (qt.gtimg.cn)
@@ -20,7 +20,6 @@ import { StockData } from '../types';
 //   34 - 最低
 // ============================================================
 
-const TENCENT_API = 'http://qt.gtimg.cn/q=';
 const STOCK_LINE_RE = /v_([a-z0-9_]+)="([^"]*)"/g;
 
 // ============================================================
@@ -30,8 +29,6 @@ const STOCK_LINE_RE = /v_([a-z0-9_]+)="([^"]*)"/g;
 // 请求: GET https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1d&range=1d
 // 响应: JSON, 含 meta.regularMarketPrice, meta.chartPreviousClose 等
 // ============================================================
-
-const YAHOO_API = 'https://query1.finance.yahoo.com/v8/finance/chart/';
 
 /** Tencent 支持的股票前缀 */
 const TENCENT_PREFIXES = ['sh', 'sz', 'bj', 'hk'];
@@ -88,10 +85,12 @@ async function fetchFromTencent(codes: string[]): Promise<Map<string, StockData>
   if (codes.length === 0) return result;
 
   try {
-    const url = TENCENT_API + codes.join(',');
-    const response = await fetch(url);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const text = iconv.decode(buffer, 'gbk');
+    const path = '/q=' + codes.join(',');
+    const { text } = await smartGetText('qt.gtimg.cn', path, {
+      useTls: false,
+      encoding: 'gbk',
+      timeoutMs: 10000,
+    });
 
     let match: RegExpExecArray | null;
     while ((match = STOCK_LINE_RE.exec(text)) !== null) {
@@ -155,19 +154,12 @@ async function fetchFromYahoo(symbols: string[]): Promise<Map<string, StockData>
   // Yahoo 不支持批量查询，串行获取
   for (const symbol of symbols) {
     try {
-      const url = `${YAHOO_API}${symbol}?interval=1d&range=1d`;
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0',
-        },
+      const path = `/v8/finance/chart/${symbol}?interval=1d&range=1d`;
+      const { data } = await smartGetJson('query1.finance.yahoo.com', path, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        timeoutMs: 10000,
       });
 
-      if (!response.ok) {
-        console.warn(`[StockBar] Yahoo ${symbol} 请求失败: ${response.status}`);
-        continue;
-      }
-
-      const data = await response.json();
       const parsed = parseYahooResponse(symbol, data);
       if (parsed) result.set(symbol, parsed);
 
@@ -218,7 +210,6 @@ function parseYahooResponse(symbol: string, raw: YahooChartResponse): StockData 
 
   const meta = raw.chart.result[0].meta;
   const quote = raw.chart.result[0].indicators.quote[0];
-  const timestamps = raw.chart.result[0].timestamp;
 
   const price = meta.regularMarketPrice;
   const yestclose = meta.chartPreviousClose;

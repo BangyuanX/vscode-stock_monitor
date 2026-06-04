@@ -153,8 +153,11 @@ async function refreshAll(): Promise<void> {
     // 检查是否有品种没有获取到数据
     const missingStocks = config.stockCodes.filter(c => !stockMap.has(c));
     const missingCryptos = config.cryptoSymbols.filter(s => !cryptoMap.has(s));
-    if (missingCryptos.length > 0) {
-      console.warn(`[StockBar] 以下加密货币获取失败: ${missingCryptos.join(', ')}`);
+    if (missingStocks.length > 0 || missingCryptos.length > 0) {
+      const msg: string[] = [];
+      if (missingStocks.length > 0) msg.push(`股票: ${missingStocks.join(', ')}`);
+      if (missingCryptos.length > 0) msg.push(`加密货币: ${missingCryptos.join(', ')}`);
+      console.warn(`[StockBar] 以下品种获取失败: ${msg.join('; ')}`);
     }
 
     // 更新状态栏
