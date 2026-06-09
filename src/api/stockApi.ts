@@ -60,18 +60,22 @@ export async function fetchStocks(codes: string[]): Promise<Map<string, StockDat
   const result = new Map<string, StockData>();
   if (codes.length === 0) return result;
 
-  // 按数据源分组
+  // 按数据源分组，同时记录原始代码名称
   const tencentCodes: string[] = [];
   const usSymbols: string[] = [];
+  const codeToYahooSymbol = new Map<string, string>(); // 原始代码 → Yahoo symbol
 
   for (const code of codes) {
     if (TENCENT_PREFIXES.some(p => code.startsWith(p))) {
       tencentCodes.push(code);
     } else if (YAHOO_V7_PREFIXES.some(p => code.startsWith(p))) {
-      usSymbols.push(code.substring(4)); // usr_aapl → AAPL
+      const yahooSym = code.substring(4); // usr_aapl → AAPL
+      usSymbols.push(yahooSym);
+      codeToYahooSymbol.set(yahooSym.toLowerCase(), code);
     } else {
       // 无前缀代码（如 BTC-USD、ETH-USD）→ 直接作为 Yahoo symbol
       usSymbols.push(code);
+      codeToYahooSymbol.set(code.toLowerCase(), code);
     }
   }
 
@@ -96,8 +100,15 @@ export async function fetchStocks(codes: string[]): Promise<Map<string, StockDat
     }
   }
 
+  // 按原始代码名称映射回结果（保留 usr_ 前缀或直接使用无前缀代码）
   for (const [symbol, data] of v7Result) {
-    result.set(`usr_${symbol.toLowerCase()}`, data);
+    const originalCode = codeToYahooSymbol.get(symbol.toLowerCase());
+    if (originalCode) {
+      result.set(originalCode, data);
+    } else {
+      // 兜底：Yahoo 返回了未预期的 symbol
+      result.set(`usr_${symbol.toLowerCase()}`, data);
+    }
   }
 
   return result;
