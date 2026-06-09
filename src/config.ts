@@ -31,10 +31,14 @@ export function readConfig(): AppConfig {
     if (!trimmed) continue;
 
     if (trimmed.startsWith('crypto:')) {
+      // crypto:BTC-USD → BTC-USD（Yahoo 标准格式）
       const symbol = trimmed.substring(7).trim();
       if (symbol) cryptoSymbols.push(symbol.toUpperCase());
     } else if (isStockCode(trimmed)) {
       stockCodes.push(trimmed);
+    } else {
+      // 无前缀代码（如 BTC-USD、SOL-USD），作为 Yahoo 格式的加密货币
+      cryptoSymbols.push(trimmed);
     }
   }
 
