@@ -22,7 +22,8 @@ export function readConfig(): AppConfig {
   const precision = config.get<Record<string, number>>('precision', {});
   const defaultPrecisionVal = precision['default'] ?? -1;
 
-  // 将代码分类为股票和加密货币
+  // 所有代码统一走 stockCodes
+  // Yahoo v7 支持所有格式：usr_NVDA、BTC-USD、ETH-USD 等
   const stockCodes: string[] = [];
   const cryptoSymbols: string[] = [];
 
@@ -31,14 +32,11 @@ export function readConfig(): AppConfig {
     if (!trimmed) continue;
 
     if (trimmed.startsWith('crypto:')) {
-      // crypto:BTC-USD → BTC-USD（Yahoo 标准格式）
+      // crypto:BTC-USD → 直接作为 stock code（Yahoo 会处理）
       const symbol = trimmed.substring(7).trim();
-      if (symbol) cryptoSymbols.push(symbol.toUpperCase());
-    } else if (isStockCode(trimmed)) {
-      stockCodes.push(trimmed);
+      if (symbol) stockCodes.push(symbol.toUpperCase());
     } else {
-      // 无前缀代码（如 BTC-USD、SOL-USD），作为 Yahoo 格式的加密货币
-      cryptoSymbols.push(trimmed);
+      stockCodes.push(trimmed);
     }
   }
 

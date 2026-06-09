@@ -69,6 +69,9 @@ export async function fetchStocks(codes: string[]): Promise<Map<string, StockDat
       tencentCodes.push(code);
     } else if (YAHOO_V7_PREFIXES.some(p => code.startsWith(p))) {
       usSymbols.push(code.substring(4)); // usr_aapl → AAPL
+    } else {
+      // 无前缀代码（如 BTC-USD、ETH-USD）→ 直接作为 Yahoo symbol
+      usSymbols.push(code);
     }
   }
 

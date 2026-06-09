@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import { readConfig, onConfigChanged } from './config';
 import { fetchStocks } from './api/stockApi';
-import { fetchCryptos } from './api/cryptoApi';
 import { StatusBarManager } from './statusBar';
 import { StockData } from './types';
 
@@ -132,32 +131,19 @@ async function refreshAll(): Promise<void> {
     const config = readConfig();
     const allData: StockData[] = [];
 
-    // 并行获取股票和加密货币数据
-    const [stockMap, cryptoMap] = await Promise.all([
-      fetchStocks(config.stockCodes),
-      fetchCryptos(config.cryptoSymbols),
-    ]);
+    // 统一通过 Yahoo v7 + 腾讯获取所有品种数据
+    const stockMap = await fetchStocks(config.stockCodes);
 
-    // 按配置顺序排列股票
+    // 按配置顺序排列
     for (const code of config.stockCodes) {
       const data = stockMap.get(code);
       if (data) allData.push(data);
     }
 
-    // 按配置顺序排列加密货币
-    for (const symbol of config.cryptoSymbols) {
-      const data = cryptoMap.get(symbol);
-      if (data) allData.push(data);
-    }
-
     // 检查是否有品种没有获取到数据
     const missingStocks = config.stockCodes.filter(c => !stockMap.has(c));
-    const missingCryptos = config.cryptoSymbols.filter(s => !cryptoMap.has(s));
-    if (missingStocks.length > 0 || missingCryptos.length > 0) {
-      const msg: string[] = [];
-      if (missingStocks.length > 0) msg.push(`股票: ${missingStocks.join(', ')}`);
-      if (missingCryptos.length > 0) msg.push(`加密货币: ${missingCryptos.join(', ')}`);
-      console.warn(`[StockBar] 以下品种获取失败: ${msg.join('; ')}`);
+    if (missingStocks.length > 0) {
+      console.warn(`[StockBar] 以下品种获取失败: ${missingStocks.join(', ')}`);
     }
 
     // 更新状态栏
