@@ -104,6 +104,7 @@ export async function fetchStocks(codes: string[]): Promise<Map<string, StockDat
   for (const [symbol, data] of v7Result) {
     const originalCode = codeToYahooSymbol.get(symbol.toLowerCase());
     if (originalCode) {
+      data.code = originalCode; // 用原始代码（大小写与用户配置一致，precision 查找正确）
       result.set(originalCode, data);
     } else {
       // 兜底：Yahoo 返回了未预期的 symbol
