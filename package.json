@@ -56,8 +56,8 @@
         },
         "stock-bar.format": {
           "type": "string",
-          "default": "${icon}${name} ${price}",
-          "description": "状态栏显示模板。支持占位符：${icon} ${name} ${price} ${change} ${percent} ${code}"
+          "default": "${name} ${price}",
+          "description": "状态栏显示模板。支持占位符：${icon} ${name} ${price} ${change} ${percent} ${code} ${session}"
         },
         "stock-bar.precision": {
           "type": "object",

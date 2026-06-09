@@ -1,5 +1,5 @@
 /** 交易时段 */
-export type MarketState = 'PRE' | 'REGULAR' | 'POST' | 'CLOSED';
+export type MarketState = 'PRE' | 'REGULAR' | 'POST' | 'OVERNIGHT' | 'CLOSED';
 
 /** 单个品种的行情数据（统一格式，无论来源） */
 export interface StockData {
@@ -63,6 +63,7 @@ export const FORMAT_FIELDS: Record<FormatField, string> = {
 export function getSessionIcon(state?: MarketState): string {
   if (state === 'PRE') return '🌅';
   if (state === 'POST') return '🌙';
+  if (state === 'OVERNIGHT') return '🌃';
   return '';
 }
 
@@ -147,7 +148,7 @@ export function buildTooltip(data: StockData): string {
   ];
 
   if (data.marketState && data.marketState !== 'REGULAR') {
-    const stateLabel = data.marketState === 'PRE' ? '盘前' : '盘后';
+    const stateLabel = data.marketState === 'PRE' ? '盘前' : data.marketState === 'POST' ? '盘后' : '夜盘';
     lines.push(`📊 ${stateLabel} ${icon} 现价: ${formatPrice(data.price)}`);
     lines.push(`  涨跌: ${formatChange(data.change)}（${formatPercent(data.changePercent)}）`);
     lines.push(`  昨收: ${formatPrice(data.yestclose)}`);

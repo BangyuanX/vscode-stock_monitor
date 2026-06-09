@@ -1,5 +1,5 @@
-import { StockData } from '../types';
-import { smartGetText } from './directHttp';
+import { StockData, MarketState } from '../types';
+import { smartGetText, smartGet, smartGetJson } from './directHttp';
 
 // ============================================================
 // 数据源 1: 腾讯行情 API (qt.gtimg.cn)
@@ -23,26 +23,35 @@ import { smartGetText } from './directHttp';
 const STOCK_LINE_RE = /v_([a-z0-9_]+)="([^"]*)"/g;
 
 // ============================================================
-// 数据源 2: Yahoo Finance API (公开免费，无需 API Key)
-// 适用于: 美股(usr_)
+// 数据源 2: 新浪财经美股行情 API (hq.sinajs.cn)
+// 适用于: 美股(usr_) — 全时段覆盖（盘前/盘中/盘后/夜盘）
 //
-// 请求: GET https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=30m&range=2d&includePrePost=true
-// 响应: JSON, 30分钟K线 + meta元数据
-//       用 indicators 中最后一根有效 K 线的 close 作为最新价（覆盖盘后休市后数据）
-//       带 includePrePost=true 时 meta 额外返回:
-//       - meta.preMarketPrice   (盘前价，美东 4:00-9:30)
-//       - meta.postMarketPrice  (盘后价，美东 16:00-20:00)
+// 请求: GET http://hq.sinajs.cn/list=gb_aapl,gb_nvda
+// 响应: var hq_str_gb_aapl="name,price,..."
+//       GBK 编码，逗号分隔
+//
+// 关键字段索引（逗号分隔）:
+//   0  - 名称
+//   1  - 最新价（全时段最成交价，含夜盘）
+//   2  - 涨跌幅(%)
+//   3  - 行情时间（北京时间）
+//   4  - 涨跌额
+//   6  - 最高
+//   7  - 最低
 // ============================================================
 
 /** Tencent 支持的股票前缀 */
 const TENCENT_PREFIXES = ['sh', 'sz', 'bj', 'hk'];
 
-/** Yahoo Finance 支持的股票前缀 */
-const YAHOO_PREFIXES = ['usr_'];
+/** 美股支持的股票前缀（优先 Yahoo v7，回退新浪） */
+const YAHOO_V7_PREFIXES = ['usr_'];
+const SINA_PREFIXES = ['usr_'];
 
 /**
  * 批量获取股票行情
  * 自动根据代码前缀选择数据源
+ *
+ * 美股: 优先 Yahoo v7（含夜盘），失败回退新浪
  *
  * @param codes 股票代码数组
  * @returns Map<code, StockData>
@@ -53,29 +62,39 @@ export async function fetchStocks(codes: string[]): Promise<Map<string, StockDat
 
   // 按数据源分组
   const tencentCodes: string[] = [];
-  const yahooCodes: string[] = [];
+  const usSymbols: string[] = [];
 
   for (const code of codes) {
     if (TENCENT_PREFIXES.some(p => code.startsWith(p))) {
       tencentCodes.push(code);
-    } else if (YAHOO_PREFIXES.some(p => code.startsWith(p))) {
-      // Yahoo 需要从 usr_aapl → AAPL
-      yahooCodes.push(code.substring(4));
+    } else if (YAHOO_V7_PREFIXES.some(p => code.startsWith(p))) {
+      usSymbols.push(code.substring(4)); // usr_aapl → AAPL
     }
   }
 
-  // 并行获取多源数据
-  const [tencentResult, yahooResult] = await Promise.all([
-    fetchFromTencent(tencentCodes),
-    fetchFromYahoo(yahooCodes),
-  ]);
-
-  // 合并结果
+  // A股/港股：腾讯行情不变
+  const tencentResult = await fetchFromTencent(tencentCodes);
   for (const [code, data] of tencentResult) result.set(code, data);
-  for (const [symbol, data] of yahooResult) {
-    // 转回带前缀的代码
-    const prefixedCode = `usr_${symbol.toLowerCase()}`;
-    result.set(prefixedCode, data);
+
+  // 美股：优先 Yahoo v7（含夜盘数据）
+  let v7Result = await fetchFromYahooV7(usSymbols);
+
+  // 如果 Yahoo v7 有缺失的，或者全部为空（可能 cookie 无效），用新浪补
+  const v7Fetched = new Set(v7Result.keys());
+  const missing = usSymbols.filter(s => !v7Fetched.has(s.toLowerCase()));
+
+  if (missing.length > 0) {
+    console.log(`[StockBar] Yahoo v7 缺失 ${missing.length} 个，从新浪补充`);
+    const sinaResult = await fetchFromSina(missing);
+    for (const [symbol, data] of sinaResult) {
+      if (!v7Result.has(symbol)) {
+        v7Result.set(symbol, data);
+      }
+    }
+  }
+
+  for (const [symbol, data] of v7Result) {
+    result.set(`usr_${symbol.toLowerCase()}`, data);
   }
 
   return result;
@@ -149,156 +168,288 @@ function parseTencentFields(code: string, fields: string[]): StockData | null {
 }
 
 /**
- * 从 Yahoo Finance 获取美股行情
+ * 从新浪财经获取美股行情（全时段覆盖：盘前/盘中/盘后/夜盘）
+ * 支持批量查询，一个 HTTP 请求获取所有股票数据
  */
-async function fetchFromYahoo(symbols: string[]): Promise<Map<string, StockData>> {
+const SINA_GB_RE = /var hq_str_gb_([a-z0-9]+)="([^"]*)";/g;
+
+async function fetchFromSina(symbols: string[]): Promise<Map<string, StockData>> {
   const result = new Map<string, StockData>();
   if (symbols.length === 0) return result;
 
-  // Yahoo 不支持批量查询，串行获取
-  for (const symbol of symbols) {
-    try {
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=30m&range=2d&includePrePost=true`;
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          Accept: 'application/json, text/plain, */*',
-          'Accept-Language': 'en-US,en;q=0.9',
-          Referer: 'https://finance.yahoo.com/',
-          Origin: 'https://finance.yahoo.com',
-        },
-        signal: AbortSignal.timeout(10000),
-      });
+  try {
+    // 新浪 gb_ 前缀: usr_aapl → AAPL → gb_aapl
+    const symbolList = symbols.map(s => `gb_${s.toLowerCase()}`).join(',');
+    const { text } = await smartGetText('hq.sinajs.cn', `/list=${symbolList}`, {
+      useTls: false,
+      encoding: 'gbk',
+      timeoutMs: 10000,
+      headers: { 'Referer': 'http://finance.sina.com.cn' },
+    });
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-
-      const parsed = parseYahooResponse(symbol, data);
-      if (parsed) result.set(symbol, parsed);
-
-      // 礼貌性延时，避免触发 Yahoo 频率限制
-      await delay(300);
-    } catch (err) {
-      console.error(`[StockBar] Yahoo ${symbol} 请求异常:`, err);
+    let match: RegExpExecArray | null;
+    while ((match = SINA_GB_RE.exec(text)) !== null) {
+      const symbol = match[1];
+      const fields = match[2].split(',');
+      const data = parseSinaFields(symbol, fields);
+      if (data) result.set(symbol, data);
     }
+  } catch (err) {
+    console.error(`[StockBar] 新浪美股行情请求失败:`, err);
   }
 
   return result;
 }
 
 /**
- * 解析 Yahoo Finance API 响应
+ * 解析新浪美股返回的字段（逗号分隔、GBK 编码）
  */
-interface YahooChartResponse {
-  chart: {
-    result: Array<{
-      meta: {
-        symbol: string;
-        regularMarketPrice: number;
-        chartPreviousClose: number;
-        regularMarketDayHigh: number;
-        regularMarketDayLow: number;
-        regularMarketTime: number;
-        /** 盘前价（盘前时段存在） */
-        preMarketPrice?: number;
-        /** 盘前时间戳 */
-        preMarketTime?: number;
-        /** 盘后价（盘后时段存在） */
-        postMarketPrice?: number;
-        /** 盘后时间戳 */
-        postMarketTime?: number;
-        /** 市场状态 */
-        marketState?: string;
-      };
-      timestamp: number[];
-      indicators: {
-        quote: Array<{
-          open: number[];
-          high: number[];
-          low: number[];
-          close: number[];
-          volume: number[];
-        }>;
-      };
-    }> | null;
-    error: { code: string; description: string } | null;
-  };
-}
+function parseSinaFields(symbol: string, fields: string[]): StockData | null {
+  if (fields.length < 10) return null;
+  if (!fields[0] || fields[1] === '' || fields[1] === '-') return null;
 
-function parseYahooResponse(symbol: string, raw: YahooChartResponse): StockData | null {
-  if (raw.chart.error || !raw.chart.result || raw.chart.result.length === 0) {
-    console.warn(`[StockBar] Yahoo ${symbol} 返回错误:`, raw.chart.error);
-    return null;
-  }
-
-  const meta = raw.chart.result[0].meta;
-  const timestamps = raw.chart.result[0].timestamp;
-  const quote = raw.chart.result[0].indicators.quote[0];
-  const yestclose = meta.chartPreviousClose;
-
-  if (isNaN(yestclose)) return null;
-
-  // 从 K 线 indicators 中找到最新有效 close（盘中/盘后/休市后都能拿到最新价）
-  let price = meta.regularMarketPrice;
-  let time: string = '';
-  let open = price;
-  let marketState: StockData['marketState'] = 'REGULAR';
-
-  if (timestamps && quote.close && quote.close.length > 0) {
-    // 从后往前找第一个有效 close
-    for (let i = timestamps.length - 1; i >= 0; i--) {
-      const close = quote.close[i];
-      if (close != null && !isNaN(close)) {
-        price = close;
-        const ts = timestamps[i];
-        time = ts ? new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false }) : '';
-        break;
-      }
-    }
-    // 从前往后找当天第一个有效 open（约30根 K 线一个交易日）
-    const DAY_CANDLES = 35;
-    const todayStart = Math.max(0, timestamps.length - DAY_CANDLES);
-    for (let i = todayStart; i < timestamps.length; i++) {
-      if (quote.open[i] != null && !isNaN(quote.open[i])) {
-        open = quote.open[i];
-        break;
-      }
-    }
-  }
-
+  const name = symbol.toUpperCase();
+  const price = parseFloat(fields[1]);
   if (isNaN(price)) return null;
 
-  // 交易时段判断：meta 中的 preMarketPrice/postMarketPrice 仅在对应扩展时段活跃时存在
-  if (meta.preMarketPrice != null && !isNaN(meta.preMarketPrice)) {
-    marketState = 'PRE';
-  } else if (meta.postMarketPrice != null && !isNaN(meta.postMarketPrice)) {
-    marketState = 'POST';
-  }
-
-  const change = price - yestclose;
-  const changePercent = yestclose > 0 ? (change / yestclose) * 100 : 0;
-  const high = meta.regularMarketDayHigh || price;
-  const low = meta.regularMarketDayLow || price;
+  const change = parseFloat(fields[4]);
+  const changePercent = parseFloat(fields[2]);
+  const yestclose = !isNaN(change) ? price - change : price;
 
   return {
-    code: symbol,
-    name: symbol.toUpperCase(),
+    code: symbol.toLowerCase(),
+    name,
     price,
-    change,
-    changePercent: parseFloat(changePercent.toFixed(2)),
-    high,
-    low,
-    open,
-    yestclose,
-    time,
-    marketState,
+    change: isNaN(change) ? 0 : change,
+    changePercent: isNaN(changePercent) ? 0 : changePercent,
+    high: parseFloat(fields[6]) || price,
+    low: parseFloat(fields[7]) || price,
+    open: yestclose, // 新浪不提供今开价，用昨收替代
+    yestclose: yestclose > 0 ? yestclose : price,
+    time: fields[3] || '',
+    marketState: undefined, // 新浪不含时段信息，由实际价格判断
   };
 }
 
 /**
- * 统一格式化腾讯 API 的时间
+ * ============================================================
+ * 数据源 3: Yahoo Finance v7 API (query1.finance.yahoo.com)
+ * 适用于: 美股(usr_) — 全时段覆盖（盘前/盘中/盘后/夜盘）
+ *
+ * 夜盘数据需要通过 crumb + cookie 认证获取。
+ * Cookie 有效期约 1 年，获取后缓存复用。
+ *
+ * 请求: GET /v7/finance/quote?symbols=NVDA&fields=overnightMarketPrice,...
+ *         &crumb=xxx&overnightPrice=true
+ * 响应: { quoteResponse: { result: [...] } }
+ * ============================================================
  */
+
+const YAHOO_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
+
+/** Yahoo cookie 缓存 */
+let yahooCookie: string | null = null;
+
+/**
+ * 从 finance.yahoo.com 获取认证 cookie（A1）
+ */
+async function fetchYahooCookie(): Promise<string | null> {
+  try {
+    // 必须访问股票详情页才会设置 A1 cookie（首页不设置）
+    const resp = await smartGet('finance.yahoo.com', '/quote/AAPL', {
+      useTls: true,
+      headers: {
+        'User-Agent': YAHOO_UA,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      timeoutMs: 20000,
+    });
+
+    const setCookie = resp.headers?.['set-cookie'];
+    if (!setCookie) return null;
+
+    // 提取 A1 cookie（多个 Set-Cookie 以 \n 合并）
+    for (const line of setCookie.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('A1=')) {
+        const cookie = trimmed.split(';')[0]; // A1=value
+        console.log('[StockBar] Yahoo cookie 获取成功');
+        return cookie;
+      }
+    }
+  } catch (err) {
+    console.error('[StockBar] Yahoo cookie 获取失败:', err);
+  }
+  return null;
+}
+
+/**
+ * 用 cookie 获取 crumb
+ */
+async function fetchYahooCrumb(cookie: string): Promise<string | null> {
+  try {
+    const { text } = await smartGetText('query2.finance.yahoo.com', '/v1/test/getcrumb', {
+      useTls: true,
+      headers: { 'Cookie': cookie, 'User-Agent': YAHOO_UA },
+    });
+    return text.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 从 Yahoo v7 获取美股行情（含夜盘）
+ * 需要有效 cookie + crumb
+ */
+const V7_FIELDS = [
+  'regularMarketPrice', 'regularMarketChange', 'regularMarketChangePercent',
+  'regularMarketPreviousClose', 'regularMarketDayHigh', 'regularMarketDayLow',
+  'preMarketPrice', 'preMarketChange', 'preMarketChangePercent',
+  'postMarketPrice', 'postMarketChange', 'postMarketChangePercent',
+  'overnightMarketPrice', 'overnightMarketChange', 'overnightMarketChangePercent',
+  'marketState', 'shortName', 'currency',
+].join(',');
+
+async function fetchFromYahooV7(symbols: string[]): Promise<Map<string, StockData>> {
+  const result = new Map<string, StockData>();
+  if (symbols.length === 0) return result;
+
+  // 获取/复用 cookie
+  if (!yahooCookie) {
+    yahooCookie = await fetchYahooCookie();
+  }
+  if (!yahooCookie) return result;
+
+  // 获取 crumb
+  const crumb = await fetchYahooCrumb(yahooCookie);
+  if (!crumb) return result;
+
+  try {
+    const symbolParam = symbols.join(',');
+    const path = `/v7/finance/quote?symbols=${symbolParam}&fields=${V7_FIELDS}&crumb=${crumb}&overnightPrice=true&formatted=false&region=US&lang=en-US`;
+
+    const { data } = await smartGetJson('query1.finance.yahoo.com', path, {
+      useTls: true,
+      headers: { 'Cookie': yahooCookie, 'User-Agent': YAHOO_UA },
+    });
+
+    const quoteData = data as YahooV7Response;
+    if (quoteData.quoteResponse?.error) {
+      console.warn('[StockBar] Yahoo v7 返回错误:', quoteData.quoteResponse.error);
+      // Auth 失败，清除 cookie 下次重试
+      if (quoteData.quoteResponse.error === 'Invalid Cookie' ||
+          String(quoteData.quoteResponse.error).includes('Unauthorized')) {
+        yahooCookie = null;
+      }
+      return result;
+    }
+
+    const quotes = quoteData.quoteResponse?.result || [];
+    for (const quote of quotes) {
+      const parsed = parseYahooV7Response(quote);
+      if (parsed) result.set(parsed.code, parsed);
+    }
+  } catch (err: any) {
+    console.error(`[StockBar] Yahoo v7 请求失败:`, err?.message || err);
+    // 网络错误，不清除 cookie（可能只是暂时问题）
+    if (err?.message?.includes('401') || err?.message?.includes('Unauthorized')) {
+      yahooCookie = null;
+    }
+  }
+
+  return result;
+}
+
+interface YahooV7Response {
+  quoteResponse: {
+    result?: Array<{
+      symbol: string;
+      shortName?: string;
+      marketState?: string;
+      regularMarketPrice?: number;
+      regularMarketChange?: number;
+      regularMarketChangePercent?: number;
+      regularMarketPreviousClose?: number;
+      regularMarketDayHigh?: number;
+      regularMarketDayLow?: number;
+      preMarketPrice?: number;
+      preMarketChange?: number;
+      preMarketChangePercent?: number;
+      postMarketPrice?: number;
+      postMarketChange?: number;
+      postMarketChangePercent?: number;
+      overnightMarketPrice?: number;
+      overnightMarketChange?: number;
+      overnightMarketChangePercent?: number;
+      currency?: string;
+    }>;
+    error?: any;
+  };
+}
+
+/**
+ * 将 Yahoo marketState 映射为我们的 MarketState
+ */
+function mapMarketState(yahooState?: string): MarketState | undefined {
+  switch (yahooState) {
+    case 'PRE': return 'PRE';
+    case 'REGULAR': return 'REGULAR';
+    case 'POST': return 'POST';
+    case 'OVERNIGHT': return 'OVERNIGHT';
+    default: return undefined;
+  }
+}
+
+/**
+ * 解析 Yahoo v7 quote 响应
+ */
+function parseYahooV7Response(quote: NonNullable<YahooV7Response['quoteResponse']['result']>[0]): StockData | null {
+  const symbol = quote.symbol;
+  if (!symbol) return null;
+
+  const regularPrice = quote.regularMarketPrice;
+  if (regularPrice == null || isNaN(regularPrice)) return null;
+
+  const marketState = quote.marketState || 'REGULAR';
+  const yestclose = quote.regularMarketPreviousClose ?? regularPrice;
+
+  // 根据交易时段选择对应价格
+  let price = regularPrice;
+  let change = quote.regularMarketChange ?? (price - yestclose);
+  let changePercent = quote.regularMarketChangePercent ?? 0;
+
+  if (marketState === 'OVERNIGHT' && quote.overnightMarketPrice != null) {
+    price = quote.overnightMarketPrice;
+    change = quote.overnightMarketChange ?? (price - yestclose);
+    changePercent = quote.overnightMarketChangePercent ?? 0;
+  } else if (marketState === 'POST' && quote.postMarketPrice != null) {
+    price = quote.postMarketPrice;
+    change = quote.postMarketChange ?? (price - yestclose);
+    changePercent = quote.postMarketChangePercent ?? 0;
+  } else if (marketState === 'PRE' && quote.preMarketPrice != null) {
+    price = quote.preMarketPrice;
+    change = quote.preMarketChange ?? (price - yestclose);
+    changePercent = quote.preMarketChangePercent ?? 0;
+  }
+
+  return {
+    code: symbol.toLowerCase(),
+    name: symbol.toUpperCase(),
+    price,
+    change,
+    changePercent: typeof changePercent === 'number' ? parseFloat(changePercent.toFixed(2)) : 0,
+    high: quote.regularMarketDayHigh || price,
+    low: quote.regularMarketDayLow || price,
+    open: yestclose,
+    yestclose,
+    time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+    marketState: mapMarketState(marketState),
+  };
+}
+
+/** Sina 美股行情正则——注意：上面已有同名声明，此处移除 */
 function formatTencentTime(raw: string): string {
   if (!raw) return '';
 
@@ -319,6 +470,3 @@ function formatTencentTime(raw: string): string {
   return raw;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}

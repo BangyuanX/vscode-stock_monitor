@@ -20,6 +20,8 @@ export interface DirectHttpResponse {
   statusCode: number;
   /** 原始字节（用于非 UTF-8 编码响应） */
   body: Buffer;
+  /** 响应头（仅 smartGet 和 smartGetWithHeaders 返回） */
+  headers?: Record<string, string>;
 }
 
 export interface HttpOptions {
@@ -146,9 +148,21 @@ function parseHttpResponse(
   const statusLine = headerLines[0];
   const statusCode = parseInt(statusLine.split(' ')[1], 10);
 
-  // 解析响应头，检测是否使用 chunked transfer-encoding
+  // 解析所有响应头
+  const headers: Record<string, string> = {};
   let isChunked = false;
   for (let i = 1; i < headerLines.length; i++) {
+    const colonIdx = headerLines[i].indexOf(':');
+    if (colonIdx > 0) {
+      const name = headerLines[i].substring(0, colonIdx).trim().toLowerCase();
+      const value = headerLines[i].substring(colonIdx + 1).trim();
+      // 同名头合并（如 Set-Cookie 可能有多个）
+      if (name === 'set-cookie') {
+        headers[name] = (headers[name] ? headers[name] + '\n' : '') + value;
+      } else {
+        headers[name] = value;
+      }
+    }
     const lower = headerLines[i].toLowerCase();
     if (lower.startsWith('transfer-encoding:') && lower.includes('chunked')) {
       isChunked = true;
@@ -160,7 +174,7 @@ function parseHttpResponse(
     body = decodeChunkedBody(body);
   }
 
-  resolve({ statusCode, body });
+  resolve({ statusCode, body, headers });
 }
 
 // ============================================================
