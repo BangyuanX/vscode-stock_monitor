@@ -1,7 +1,11 @@
 import * as net from 'net';
 import * as tls from 'tls';
+import * as dns from 'dns';
 import * as vscode from 'vscode';
 import * as iconv from 'iconv-lite';
+
+// 优先 IPv4 — 家庭网络常因 IPv6 配置不佳导致超时
+dns.setDefaultResultOrder('ipv4first');
 
 /**
  * 统一 HTTP(S) 请求 — 支持先试代理、失败回退直连。
@@ -208,8 +212,10 @@ function sendGetRequest(
 
     // 构造请求行
     //   DIRECT:  GET /path HTTP/1.1
-    //   PROXY:   GET http://hostname/path HTTP/1.1
-    const requestPath = method === 'PROXY' ? `http://${hostname}${path}` : path;
+    //   PROXY (HTTP):  GET http://hostname/path HTTP/1.1
+    //   PROXY (CONNECT/HTTPS): GET /path HTTP/1.1 (隧道建立后直接用相对路径)
+    const isConnectTunnel = method === 'PROXY' && sock instanceof tls.TLSSocket;
+    const requestPath = isConnectTunnel ? path : method === 'PROXY' ? `http://${hostname}${path}` : path;
 
     const headerLines = Object.entries(headers).map(([k, v]) => `${k}: ${v}`);
     const request = [
@@ -267,7 +273,6 @@ function directConnect(
             host: hostname,
             servername: hostname,
             rejectUnauthorized: true,
-            ALPNProtocols: ['http/1.1'],
           },
           () => resolve(tlsSocket),
         );
@@ -345,7 +350,6 @@ function proxyConnect(
               host: hostname,
               servername: hostname,
               rejectUnauthorized: true,
-              ALPNProtocols: ['http/1.1'],
             },
             () => resolve(tlsSocket),
           );
@@ -403,7 +407,7 @@ function markProxyOk(): void {
 // 统一入口函数
 // ============================================================
 
-function smartGetInternal(
+async function smartGetInternal(
   hostname: string,
   path: string,
   options?: HttpOptions,
@@ -413,6 +417,44 @@ function smartGetInternal(
   const timeoutMs = options?.timeoutMs ?? 10000;
   const headers: Record<string, string> = { ...options?.headers };
 
+  const MAX_REDIRECTS = 5;
+  let currentHost = hostname;
+  let currentPath = path;
+  let currentTls = useTls;
+  let currentPort = port;
+
+  for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
+    const response = await httpFetchOne(currentHost, currentPath, currentTls, currentPort, timeoutMs, headers);
+
+    // 跟随 3xx 重定向（Yahoo 可能因地区/语言重定向）
+    if (response.statusCode >= 300 && response.statusCode < 400 && response.headers?.location) {
+      const location = response.headers.location;
+      const parsed = new URL(location, `http${currentTls ? 's' : ''}://${currentHost}${currentPath}`);
+      currentHost = parsed.hostname;
+      currentPath = parsed.pathname + parsed.search;
+      currentTls = parsed.protocol === 'https:';
+      currentPort = currentTls ? 443 : 80;
+      console.log(`[StockBar] 跟随重定向 (${response.statusCode}): ${location}`);
+      continue;
+    }
+
+    return response;
+  }
+
+  throw new Error(`[StockBar] 重定向次数超过 ${MAX_REDIRECTS} 次`);
+}
+
+/**
+ * 执行单次 HTTP 请求（代理优先，失败回退直连）
+ */
+async function httpFetchOne(
+  hostname: string,
+  path: string,
+  useTls: boolean,
+  port: number,
+  timeoutMs: number,
+  headers: Record<string, string>,
+): Promise<DirectHttpResponse> {
   const proxy = getVscodeProxy();
 
   async function attemptDirect(): Promise<DirectHttpResponse> {
@@ -426,16 +468,13 @@ function smartGetInternal(
   }
 
   if (!proxy) {
-    // 没有配置代理 → 直接直连
     return attemptDirect();
   }
 
-  // 代理在冷却期内 → 跳过代理，直接直连
   if (shouldSkipProxy(proxy)) {
     return attemptDirect();
   }
 
-  // 尝试代理 → 失败则回退直连并缓存失败状态
   return attemptProxy()
     .then((result) => {
       markProxyOk();

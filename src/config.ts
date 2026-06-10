@@ -32,9 +32,16 @@ export function readConfig(): AppConfig {
     if (!trimmed) continue;
 
     if (trimmed.startsWith('crypto:')) {
-      // crypto:BTC-USD → 直接作为 stock code（Yahoo 会处理）
-      const symbol = trimmed.substring(7).trim();
-      if (symbol) stockCodes.push(symbol.toUpperCase());
+      // Yahoo 格式：BTC-USD（带横杠）
+      // 兼容旧配置：BTCUSDT（OKX 格式，无横杠）
+      let symbol = trimmed.substring(7).trim().toUpperCase();
+      if (symbol) {
+        // BTCUSDT → BTC-USD（USDT 后缀转 Yahoo 格式）
+        if (!symbol.includes('-') && symbol.endsWith('USDT') && symbol.length > 4) {
+          symbol = symbol.slice(0, -4) + '-USD';
+        }
+        stockCodes.push(symbol);
+      }
     } else {
       stockCodes.push(trimmed);
     }
