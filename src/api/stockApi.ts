@@ -265,6 +265,9 @@ const YAHOO_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/53
 /** Yahoo cookie 缓存 */
 let yahooCookie: string | null = null;
 
+/** Yahoo 限流冷却期（毫秒时间戳），期内跳过 Yahoo 请求 */
+let yahooRateLimitUntil = 0;
+
 /**
  * 从 finance.yahoo.com 获取认证 cookie（A1）
  */
@@ -337,6 +340,12 @@ async function fetchFromYahooV7(symbols: string[]): Promise<Map<string, StockDat
   const result = new Map<string, StockData>();
   if (symbols.length === 0) return result;
 
+  // 限流冷却期内跳过
+  if (Date.now() < yahooRateLimitUntil) {
+    console.log('[StockBar] Yahoo 限流冷却中，跳过本轮');
+    return result;
+  }
+
   // 获取/复用 cookie
   if (!yahooCookie) {
     yahooCookie = await fetchYahooCookie();
@@ -353,7 +362,11 @@ async function fetchFromYahooV7(symbols: string[]): Promise<Map<string, StockDat
 
     const { data } = await smartGetJson('query1.finance.yahoo.com', path, {
       useTls: true,
-      headers: { 'Cookie': yahooCookie, 'User-Agent': YAHOO_UA },
+      headers: {
+        'Cookie': yahooCookie,
+        'User-Agent': YAHOO_UA,
+        'Accept': 'application/json',
+      },
     });
 
     const quoteData = data as YahooV7Response;
@@ -373,11 +386,17 @@ async function fetchFromYahooV7(symbols: string[]): Promise<Map<string, StockDat
       if (parsed) result.set(parsed.code, parsed);
     }
   } catch (err: any) {
-    console.error(`[StockBar] Yahoo v7 请求失败:`, err?.message || err);
+    const msg = err?.message || '';
+    console.error(`[StockBar] Yahoo v7 请求失败:`, msg);
+    // HTTP 429（Too Many Requests）→ 冷却 2 分钟，不清除 cookie
+    if (msg.includes('429') || msg.includes('Too Many Requests')) {
+      yahooRateLimitUntil = Date.now() + 120_000;
+      console.log(`[StockBar] Yahoo 触发限流，冷却 2 分钟`);
+    }
     // API 返回非 JSON（如 HTML 错误页）或 401 → 清除 cookie 下次重建
-    if (err?.message?.includes('非JSON响应') ||
-        err?.message?.includes('401') ||
-        err?.message?.includes('Unauthorized')) {
+    if (msg.includes('非JSON响应') ||
+        msg.includes('401') ||
+        msg.includes('Unauthorized')) {
       yahooCookie = null;
       console.log('[StockBar] Yahoo cookie 已清除，下次刷新将重新获取');
     }
