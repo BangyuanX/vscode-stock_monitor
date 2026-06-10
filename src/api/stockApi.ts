@@ -308,7 +308,13 @@ async function fetchYahooCrumb(cookie: string): Promise<string | null> {
       useTls: true,
       headers: { 'Cookie': cookie, 'User-Agent': YAHOO_UA },
     });
-    return text.trim() || null;
+    const crumb = text.trim();
+    // crumb 必须是纯字母数字（HTML 页面说明被拦截了）
+    if (!crumb || !/^[a-zA-Z0-9]+$/.test(crumb)) {
+      console.warn('[StockBar] Yahoo crumb 格式异常，可能被拦截');
+      return null;
+    }
+    return crumb;
   } catch {
     return null;
   }
@@ -368,9 +374,12 @@ async function fetchFromYahooV7(symbols: string[]): Promise<Map<string, StockDat
     }
   } catch (err: any) {
     console.error(`[StockBar] Yahoo v7 请求失败:`, err?.message || err);
-    // 网络错误，不清除 cookie（可能只是暂时问题）
-    if (err?.message?.includes('401') || err?.message?.includes('Unauthorized')) {
+    // API 返回非 JSON（如 HTML 错误页）或 401 → 清除 cookie 下次重建
+    if (err?.message?.includes('非JSON响应') ||
+        err?.message?.includes('401') ||
+        err?.message?.includes('Unauthorized')) {
       yahooCookie = null;
+      console.log('[StockBar] Yahoo cookie 已清除，下次刷新将重新获取');
     }
   }
 

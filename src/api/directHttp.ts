@@ -534,7 +534,7 @@ export async function smartGetJson<T = any>(
   const text = resp.body.toString('utf8').trim();
 
   if (!text.startsWith('{') && !text.startsWith('[')) {
-    throw new Error(`非JSON响应: ${text.substring(0, 100)}`);
+    throw new Error(`非JSON响应 (HTTP ${resp.statusCode}): ${text.substring(0, 100)}`);
   }
 
   return { statusCode: resp.statusCode, data: JSON.parse(text) };
@@ -584,7 +584,7 @@ export async function directGetJson<T = any>(
   const text = resp.body.toString('utf8').trim();
 
   if (!text.startsWith('{') && !text.startsWith('[')) {
-    throw new Error(`非JSON响应: ${text.substring(0, 100)}`);
+    throw new Error(`非JSON响应 (HTTP ${resp.statusCode}): ${text.substring(0, 100)}`);
   }
 
   return { statusCode: resp.statusCode, data: JSON.parse(text) };
