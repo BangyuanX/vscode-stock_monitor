@@ -22,36 +22,17 @@ import { smartGetText, smartGet, smartGetJson } from './directHttp';
 
 const STOCK_LINE_RE = /v_([a-z0-9_]+)="([^"]*)"/g;
 
-// ============================================================
-// 数据源 2: 新浪财经美股行情 API (hq.sinajs.cn)
-// 适用于: 美股(usr_) — 全时段覆盖（盘前/盘中/盘后/夜盘）
-//
-// 请求: GET http://hq.sinajs.cn/list=gb_aapl,gb_nvda
-// 响应: var hq_str_gb_aapl="name,price,..."
-//       GBK 编码，逗号分隔
-//
-// 关键字段索引（逗号分隔）:
-//   0  - 名称
-//   1  - 最新价（全时段最成交价，含夜盘）
-//   2  - 涨跌幅(%)
-//   3  - 行情时间（北京时间）
-//   4  - 涨跌额
-//   6  - 最高
-//   7  - 最低
-// ============================================================
-
 /** Tencent 支持的股票前缀 */
 const TENCENT_PREFIXES = ['sh', 'sz', 'bj', 'hk'];
 
-/** 美股支持的股票前缀（优先 Yahoo v7，回退新浪） */
+/** 美股支持的股票前缀（Yahoo v7） */
 const YAHOO_V7_PREFIXES = ['usr_'];
-const SINA_PREFIXES = ['usr_'];
 
 /**
  * 批量获取股票行情
  * 自动根据代码前缀选择数据源
  *
- * 美股: 优先 Yahoo v7（含夜盘），失败回退新浪
+ * 美股: Yahoo v7（含夜盘）
  *
  * @param codes 股票代码数组
  * @returns Map<code, StockData>
@@ -83,22 +64,8 @@ export async function fetchStocks(codes: string[]): Promise<Map<string, StockDat
   const tencentResult = await fetchFromTencent(tencentCodes);
   for (const [code, data] of tencentResult) result.set(code, data);
 
-  // 美股：优先 Yahoo v7（含夜盘数据）
+  // 美股：Yahoo v7（含夜盘数据）
   let v7Result = await fetchFromYahooV7(usSymbols);
-
-  // 如果 Yahoo v7 有缺失的，或者全部为空（可能 cookie 无效），用新浪补
-  const v7Fetched = new Set(v7Result.keys());
-  const missing = usSymbols.filter(s => !v7Fetched.has(s.toLowerCase()));
-
-  if (missing.length > 0) {
-    console.log(`[StockBar] Yahoo v7 缺失 ${missing.length} 个，从新浪补充`);
-    const sinaResult = await fetchFromSina(missing);
-    for (const [symbol, data] of sinaResult) {
-      if (!v7Result.has(symbol)) {
-        v7Result.set(symbol, data);
-      }
-    }
-  }
 
   // 按原始代码名称映射回结果（保留 usr_ 前缀或直接使用无前缀代码）
   for (const [symbol, data] of v7Result) {
@@ -183,72 +150,9 @@ function parseTencentFields(code: string, fields: string[]): StockData | null {
 }
 
 /**
- * 从新浪财经获取美股行情（全时段覆盖：盘前/盘中/盘后/夜盘）
- * 支持批量查询，一个 HTTP 请求获取所有股票数据
- */
-const SINA_GB_RE = /var hq_str_gb_([a-z0-9]+)="([^"]*)";/g;
-
-async function fetchFromSina(symbols: string[]): Promise<Map<string, StockData>> {
-  const result = new Map<string, StockData>();
-  if (symbols.length === 0) return result;
-
-  try {
-    // 新浪 gb_ 前缀: usr_aapl → AAPL → gb_aapl
-    const symbolList = symbols.map(s => `gb_${s.toLowerCase()}`).join(',');
-    const { text } = await smartGetText('hq.sinajs.cn', `/list=${symbolList}`, {
-      useTls: false,
-      encoding: 'gbk',
-      timeoutMs: 10000,
-      headers: { 'Referer': 'http://finance.sina.com.cn' },
-    });
-
-    let match: RegExpExecArray | null;
-    while ((match = SINA_GB_RE.exec(text)) !== null) {
-      const symbol = match[1];
-      const fields = match[2].split(',');
-      const data = parseSinaFields(symbol, fields);
-      if (data) result.set(symbol, data);
-    }
-  } catch (err) {
-    console.error(`[StockBar] 新浪美股行情请求失败:`, err);
-  }
-
-  return result;
-}
-
-/**
- * 解析新浪美股返回的字段（逗号分隔、GBK 编码）
- */
-function parseSinaFields(symbol: string, fields: string[]): StockData | null {
-  if (fields.length < 10) return null;
-  if (!fields[0] || fields[1] === '' || fields[1] === '-') return null;
-
-  const name = symbol.toUpperCase();
-  const price = parseFloat(fields[1]);
-  if (isNaN(price)) return null;
-
-  const change = parseFloat(fields[4]);
-  const changePercent = parseFloat(fields[2]);
-  const yestclose = !isNaN(change) ? price - change : price;
-
-  return {
-    code: symbol.toLowerCase(),
-    name,
-    price,
-    change: isNaN(change) ? 0 : change,
-    changePercent: isNaN(changePercent) ? 0 : changePercent,
-    high: parseFloat(fields[6]) || price,
-    low: parseFloat(fields[7]) || price,
-    open: yestclose, // 新浪不提供今开价，用昨收替代
-    yestclose: yestclose > 0 ? yestclose : price,
-    time: fields[3] || '',
-    marketState: undefined, // 新浪不含时段信息，由实际价格判断
-  };
-}
-
-/**
+ *
  * ============================================================
- * 数据源 3: Yahoo Finance v7 API (query1.finance.yahoo.com)
+ * 数据源 2: Yahoo Finance v7 API (query1.finance.yahoo.com)
  * 适用于: 美股(usr_) — 全时段覆盖（盘前/盘中/盘后/夜盘）
  *
  * 夜盘数据需要通过 crumb + cookie 认证获取。
@@ -267,6 +171,9 @@ let yahooCookie: string | null = null;
 
 /** Yahoo 限流冷却期（毫秒时间戳），期内跳过 Yahoo 请求 */
 let yahooRateLimitUntil = 0;
+
+/** Yahoo crumb 缓存（crumb 长期有效，避免每次轮询都重新获取） */
+let yahooCrumbCache: { crumb: string; expiresAt: number } | null = null;
 
 /**
  * 从 finance.yahoo.com 获取认证 cookie（A1）
@@ -303,18 +210,48 @@ async function fetchYahooCookie(): Promise<string | null> {
 }
 
 /**
- * 用 cookie 获取 crumb
+ * 获取 crumb（带缓存，crumb 长期有效，避免每次轮询都请求）
+ */
+async function fetchYahooCrumbCached(cookie: string): Promise<string | null> {
+  // 缓存有效期内直接返回
+  if (yahooCrumbCache && Date.now() < yahooCrumbCache.expiresAt) {
+    return yahooCrumbCache.crumb;
+  }
+  // 缓存过期或不存在，重新获取
+  const crumb = await fetchYahooCrumb(cookie);
+  if (crumb) {
+    yahooCrumbCache = { crumb, expiresAt: Date.now() + 3600_000 }; // 缓存 1 小时
+  } else {
+    yahooCrumbCache = null; // 获取失败，清除缓存
+  }
+  return crumb;
+}
+
+/**
+ * 用 cookie 获取 crumb（不带缓存）
  */
 async function fetchYahooCrumb(cookie: string): Promise<string | null> {
   try {
-    const { text } = await smartGetText('query2.finance.yahoo.com', '/v1/test/getcrumb', {
+    const { text, statusCode } = await smartGetText('query2.finance.yahoo.com', '/v1/test/getcrumb', {
       useTls: true,
       headers: { 'Cookie': cookie, 'User-Agent': YAHOO_UA },
     });
+
+    // 429 Too Many Requests → 设置冷却期，避免持续重试
+    if (statusCode === 429 || text.trim() === 'Too Many Requests') {
+      yahooRateLimitUntil = Date.now() + 120_000;
+      console.warn(`[StockBar] Yahoo crumb 接口触发限流 (429)，冷却 2 分钟`);
+      return null;
+    }
+
     const crumb = text.trim();
-    // crumb 必须是纯字母数字（HTML 页面说明被拦截了）
-    if (!crumb || !/^[a-zA-Z0-9]+$/.test(crumb)) {
-      console.warn('[StockBar] Yahoo crumb 格式异常，可能被拦截');
+    // crumb 必须包含有效字符（HTML 页面说明被拦截了）
+    if (!crumb || !/^[a-zA-Z0-9\/_\-+.,~]+$/.test(crumb)) {
+      console.warn(`[StockBar] Yahoo crumb 格式异常 (HTTP ${statusCode})，可能被拦截: ${crumb.substring(0, 50)}`);
+      // 非 200 响应（如 404/500）也触发冷却
+      if (statusCode !== 200) {
+        yahooRateLimitUntil = Date.now() + 60_000;
+      }
       return null;
     }
     return crumb;
@@ -352,13 +289,13 @@ async function fetchFromYahooV7(symbols: string[]): Promise<Map<string, StockDat
   }
   if (!yahooCookie) return result;
 
-  // 获取 crumb
-  const crumb = await fetchYahooCrumb(yahooCookie);
+  // 获取 crumb（带缓存）
+  const crumb = await fetchYahooCrumbCached(yahooCookie);
   if (!crumb) return result;
 
   try {
     const symbolParam = symbols.join(',');
-    const path = `/v7/finance/quote?symbols=${symbolParam}&fields=${V7_FIELDS}&crumb=${crumb}&overnightPrice=true&formatted=false&region=US&lang=en-US`;
+    const path = `/v7/finance/quote?symbols=${symbolParam}&fields=${V7_FIELDS}&crumb=${encodeURIComponent(crumb)}&overnightPrice=true&formatted=false&region=US&lang=en-US`;
 
     const { data } = await smartGetJson('query1.finance.yahoo.com', path, {
       useTls: true,
@@ -376,6 +313,7 @@ async function fetchFromYahooV7(symbols: string[]): Promise<Map<string, StockDat
       if (quoteData.quoteResponse.error === 'Invalid Cookie' ||
           String(quoteData.quoteResponse.error).includes('Unauthorized')) {
         yahooCookie = null;
+        yahooCrumbCache = null;
       }
       return result;
     }
@@ -492,7 +430,6 @@ function parseYahooV7Response(quote: NonNullable<YahooV7Response['quoteResponse'
   };
 }
 
-/** Sina 美股行情正则——注意：上面已有同名声明，此处移除 */
 function formatTencentTime(raw: string): string {
   if (!raw) return '';
 

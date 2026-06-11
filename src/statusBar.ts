@@ -79,6 +79,16 @@ export class StatusBarManager {
 
     for (let i = 0; i < limited.length; i++) {
       const data = limited[i];
+
+      // 获取失败的品种显示错误标记
+      if (data.error) {
+        const errorText = `⛔${data.code}`;
+        const errorTooltip = `${data.code}: ${data.error}\n下次刷新自动重试`;
+        activeCodes.add(data.code);
+        this.createOrUpdateItem(data.code, errorText, errorTooltip, this.flatColor || '#888888', i);
+        continue;
+      }
+
       // 按代码查找精度，没有则用默认值
       const prec = this.precision[data.code] ?? this.defaultPrecision;
       const precision = prec >= 0 ? prec : undefined;

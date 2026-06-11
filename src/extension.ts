@@ -140,8 +140,23 @@ async function refreshAll(): Promise<void> {
       if (data) allData.push(data);
     }
 
-    // 检查是否有品种没有获取到数据
+    // 为获取失败的品种创建错误标记，显示在状态栏末尾
     const missingStocks = config.stockCodes.filter(c => !stockMap.has(c));
+    for (const code of missingStocks) {
+      allData.push({
+        code,
+        name: code,
+        price: 0,
+        change: 0,
+        changePercent: 0,
+        high: 0,
+        low: 0,
+        open: 0,
+        yestclose: 0,
+        time: '',
+        error: '获取失败',
+      });
+    }
     if (missingStocks.length > 0) {
       console.warn(`[StockBar] 以下品种获取失败: ${missingStocks.join(', ')}`);
     }

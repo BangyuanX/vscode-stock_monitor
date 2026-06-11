@@ -14,6 +14,8 @@ export interface StockData {
   yestclose: number;     // 昨收价
   time: string;          // 行情时间
   marketState?: MarketState; // 交易时段（盘前/盘中/盘后）
+  /** 获取失败时的错误信息（非空表示该品种获取失败） */
+  error?: string;
 }
 
 /** 格式化后的展示数据 */
