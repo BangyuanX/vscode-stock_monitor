@@ -255,7 +255,8 @@ async function fetchYahooCrumb(cookie: string): Promise<string | null> {
       return null;
     }
     return crumb;
-  } catch {
+  } catch (err) {
+    console.warn(`[StockBar] Yahoo crumb 请求异常:`, err instanceof Error ? err.message : String(err));
     return null;
   }
 }
