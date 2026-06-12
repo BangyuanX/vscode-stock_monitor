@@ -24,10 +24,10 @@ const STOCK_LINE_RE = /v_([a-z0-9_]+)="([^"]*)"/g;
 const TENCENT_PREFIXES = ['sh', 'sz', 'bj', 'hk'];
 
 // ============================================================
-// 数据源 2: 新浪财经美股行情 API (hq.sinajs.cn) — HTTPS
-// 适用于: 美股(usr_) — 全时段覆盖（盘前/盘中/盘后/夜盘）
+// 数据源 2: 新浪财经美股行情 API (hq.sinajs.cn) — HTTP
+// 适用于: 美股(usr_) — 全时段覆盖（盘前/盘中/盘后）
 //
-// 请求: GET https://hq.sinajs.cn/list=usr_nvda,usr_aapl
+// 请求: GET http://hq.sinajs.cn/list=usr_nvda,usr_aapl
 // 响应: var hq_str_usr_nvda="name,price,..."
 //       GBK 编码，逗号分隔
 //
@@ -64,7 +64,7 @@ async function fetchFromSinaUs(symbols: string[]): Promise<Map<string, StockData
     // 新浪 usr_ 前缀: NVDA → usr_nvda
     const symbolList = symbols.map(s => `usr_${s.toLowerCase()}`).join(',');
     const { text } = await smartGetText('hq.sinajs.cn', `/list=${symbolList}`, {
-      useTls: true, // HTTPS
+      useTls: false, // 公司网络封锁新浪 HTTPS 但放行 HTTP
       timeoutMs: 10000,
       encoding: 'gbk',
       headers: { 'Referer': 'http://finance.sina.com.cn' },
