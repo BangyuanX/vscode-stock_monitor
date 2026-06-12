@@ -198,7 +198,7 @@ function parseSinaUsFields(code: string, fields: string[]): StockData | null {
       : changePercent;
 
   return {
-    code: symbol.toLowerCase(),
+    code, // 保留原始代码（如 usr_mrvl），与 precision 配置 key 一致
     name,
     price,
     change: safeChange,
