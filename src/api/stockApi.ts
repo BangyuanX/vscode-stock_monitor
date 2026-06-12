@@ -3,10 +3,10 @@ import { smartGetText, smartGetJson } from './directHttp';
 
 // ============================================================
 // 数据源 1: 新浪财经行情 API (hq.sinajs.cn) — HTTPS
-// 适用于: A股(sh/sz/bj)、港股(hk)、美股(usr_)
+// 适用于: A股(sh/sz/bj)、港股(hk)、美股(usr_)、外汇(fx_)
 //
-// 请求: GET https://hq.sinajs.cn/list=sh000001,usr_nvda,hk00700
-// 响应: var hq_str_sh000001="..."; var hq_str_usr_nvda="...";
+// 请求: GET https://hq.sinajs.cn/list=sh000001,usr_nvda,fx_susdcny
+// 响应: var hq_str_sh000001="..."; var hq_str_fx_susdcny="...";
 //       GBK 编码，逗号分隔
 //
 // A股关键字段索引（逗号分隔）:
@@ -36,11 +36,26 @@ import { smartGetText, smartGetJson } from './directHttp';
 //   35 - 前一日收盘价（盘前时段使用）
 // ============================================================
 
+// 外汇关键字段索引（逗号分隔）:
+//   0  - 时间
+//   1  - 买入价
+//   2  - 卖出价
+//   3  - 今开
+//   4  - 成交量
+//   5  - 最高
+//   6  - 最低(?) 注：实际为前日收盘
+//   7  - 前日收盘
+//   8  - 名称
+//   9  - 涨跌幅(%)
+//   10 - 涨跌额
+//   17 - 日期
+// ============================================================
+
 /** 新浪行情正则：var hq_str_sh000001="..." / var hq_str_usr_nvda="..." */
 const SINA_ALL_RE = /var hq_str_([a-z0-9_]+)="([^"]*)";/g;
 
 /** 新浪支持的股票前缀 */
-const SINA_PREFIXES = ['sh', 'sz', 'bj', 'hk', 'usr_'];
+const SINA_PREFIXES = ['sh', 'sz', 'bj', 'hk', 'usr_', 'fx_'];
 
 /** 美股前缀 */
 const USR_PREFIX = 'usr_';
@@ -74,6 +89,9 @@ async function fetchFromSina(codes: string[]): Promise<Map<string, StockData>> {
       if (code.startsWith(USR_PREFIX)) {
         // 美股：usr_nvda
         data = parseSinaUsFields(code, fields);
+      } else if (code.startsWith('fx_')) {
+        // 外汇：fx_susdcny / fx_sjpycnh
+        data = parseSinaForexFields(code, fields);
       } else {
         // A股/港股：sh000001 / sz000001 / hk00700
         data = parseSinaCnFields(code, fields);
@@ -209,6 +227,37 @@ function parseSinaUsFields(code: string, fields: string[]): StockData | null {
     yestclose: effectiveYestclose,
     time: fields[24] || new Date().toLocaleTimeString('zh-CN', { hour12: false }),
     marketState: session,
+  };
+}
+
+/**
+ * 解析新浪外汇返回的字段
+ */
+function parseSinaForexFields(code: string, fields: string[]): StockData | null {
+  if (fields.length < 10) return null;
+  const price = parseFloat(fields[1]);
+  if (isNaN(price)) return null;
+
+  const name = fields[8] || code;
+  const yestclose = parseFloat(fields[7]) || price;
+  const change = parseFloat(fields[10]);
+  const changePercent = parseFloat(fields[9]);
+  const high = parseFloat(fields[5]) || price;
+  const low = parseFloat(fields[6]) || price;
+  const open = parseFloat(fields[3]) || yestclose;
+  const time = fields[17] && fields[0] ? `${fields[17]} ${fields[0]}` : (fields[0] || '');
+
+  return {
+    code,
+    name,
+    price,
+    change: isNaN(change) ? price - yestclose : change,
+    changePercent: isNaN(changePercent) ? 0 : changePercent,
+    high,
+    low,
+    open,
+    yestclose: yestclose > 0 ? yestclose : price,
+    time,
   };
 }
 
