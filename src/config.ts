@@ -23,7 +23,7 @@ export function readConfig(): AppConfig {
   const defaultPrecisionVal = precision['default'] ?? -1;
 
   // 所有代码统一走 stockCodes
-  // Yahoo v7 支持所有格式：usr_NVDA、BTC-USD、ETH-USD 等
+  // 支持格式：usr_NVDA（新浪美股）、BTCUSDT/BTC-USD（Binance 加密货币/美股代币）等
   const stockCodes: string[] = [];
   const cryptoSymbols: string[] = [];
 
