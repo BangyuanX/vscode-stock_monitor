@@ -1,3 +1,5 @@
+import * as http from 'http';
+import * as https from 'https';
 import * as net from 'net';
 import * as tls from 'tls';
 import * as dns from 'dns';
@@ -35,6 +37,59 @@ export interface HttpOptions {
   timeoutMs?: number;
   /** 响应编码，仅 smartGetText 使用 */
   encoding?: string;
+}
+
+// ============================================================
+// 内部：使用 Node.js 标准 http/https 模块请求（与 Leek Fund 一致）
+// 正确处理 keep-alive、chunked 编码、Content-Length，不依赖连接关闭
+// ============================================================
+
+/**
+ * 使用 Node.js 标准 http/https 模块发送 GET 请求
+ * 底层与 axios/Leek Fund 一致，正确解析 HTTP 响应（不依赖 connection close）
+ */
+function httpNativeRequest(
+  hostname: string,
+  path: string,
+  useTls: boolean,
+  headers: Record<string, string>,
+  timeoutMs: number,
+): Promise<DirectHttpResponse> {
+  return new Promise((resolve, reject) => {
+    const mod = useTls ? https : http;
+    const req = mod.request(
+      `${useTls ? 'https' : 'http'}://${hostname}${path}`,
+      {
+        method: 'GET',
+        headers,
+        timeout: timeoutMs,
+        rejectUnauthorized: true,
+      },
+      (res: http.IncomingMessage) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: string | Buffer) => chunks.push(Buffer.from(chunk)));
+        res.on('end', () => {
+          const respHeaders: Record<string, string> = {};
+          for (const [k, v] of Object.entries(res.headers)) {
+            if (k && v) {
+              respHeaders[k] = Array.isArray(v) ? v.join('\n') : String(v);
+            }
+          }
+          resolve({
+            statusCode: res.statusCode ?? 0,
+            body: Buffer.concat(chunks),
+            headers: respHeaders,
+          });
+        });
+      },
+    );
+    req.on('error', (e) => reject(new Error(`请求失败: ${e.message}`)));
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error(`timeout (${timeoutMs}ms)`));
+    });
+    req.end();
+  });
 }
 
 interface ProxyConfig {
@@ -471,8 +526,7 @@ async function httpFetchOne(
   const proxy = getVscodeProxy();
 
   async function attemptDirect(): Promise<DirectHttpResponse> {
-    const sock = await directConnect(hostname, port, useTls, timeoutMs);
-    return await sendGetRequest(sock, 'DIRECT', hostname, path, headers, timeoutMs);
+    return await httpNativeRequest(hostname, path, useTls, headers, timeoutMs);
   }
 
   async function attemptProxy(): Promise<DirectHttpResponse> {
