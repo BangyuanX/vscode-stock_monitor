@@ -64,6 +64,7 @@ function httpNativeRequest(
         headers,
         timeout: timeoutMs,
         rejectUnauthorized: true,
+        agent: false, // 绕过 VSCode 全局代理，直连目标服务器
       },
       (res: http.IncomingMessage) => {
         const chunks: Buffer[] = [];
