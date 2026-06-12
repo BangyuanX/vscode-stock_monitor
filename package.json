@@ -46,7 +46,7 @@
             "sh000001",
             "sh601899"
           ],
-          "description": "监控的品种代码列表。A股：sh/sz前缀（如 sh000001）；港股：hk前缀（如 hk00700）；美股：usr_前缀（如 usr_aapl）；加密货币：crypto:前缀（如 crypto:BTCUSDT）"
+          "description": "监控的品种代码列表。A股：sh/sz/bj前缀（如 sh000001）；港股：hk前缀（如 hk00700）；美股：usr_前缀（如 usr_nvda）；加密货币：BTC/USDT 格式（如 BTC/USDT）；美股代币：NVDA/USDT；外汇：fx_前缀（如 fx_sjpycnh）"
         },
         "stock-bar.interval": {
           "type": "number",
@@ -62,7 +62,7 @@
         "stock-bar.precision": {
           "type": "object",
           "default": {},
-          "description": "每个品种的小数点位数的覆盖设置。key为品种代码，value为小数位数。用 \"default\" 设置全局默认值。示例：{\"sh000001\": 2, \"crypto:BTCUSDT\": 0, \"default\": 2}",
+          "description": "每个品种的小数点位数的覆盖设置。key为品种代码，value为小数位数。用 \"default\" 设置全局默认值。示例：{\"sh000001\": 2, \"BTC/USDT\": 0, \"fx_sjpycnh\": 4, \"default\": 2}",
           "additionalProperties": {
             "type": "number"
           }

@@ -22,8 +22,8 @@
 | A 股（北证） | `bj` + 6 位代码 | `bj830799` | 新浪 HTTPS |
 | 港股 | `hk` + 5 位代码 | `hk00700` | 新浪 HTTPS |
 | 美股 | `usr_` + 代码 | `usr_nvda` | 新浪 HTTPS（含盘前/盘后） |
-| 加密货币 | `BTC-USD` / `crypto:BTCUSDT` | `BTC-USD` | Binance data-api |
-| 美股代币 | 直接写交易对 | `MUBUSDT` | Binance data-api |
+| 加密货币 | `BTC/USDT`（标准格式） | `BTC/USDT` | Binance data-api |
+| 美股代币 | `NVDA/USDT` / `MUB/USDT` | `NVDA/USDT` | Binance data-api |
 | 外汇 | `fx_` + 货币对 | `fx_sjpycnh` | 新浪 HTTPS |
 
 ### 外汇货币对照
@@ -83,7 +83,8 @@ pnpm run compile
   "sz159501",
   "usr_nvda",
   "usr_mrvl",
-  "BTC-USD",
+  "BTC/USDT",
+  "MUB/USDT",
   "fx_sjpycnh"
 ]
 ```
@@ -98,8 +99,8 @@ pnpm run compile
     "sz159501",      // 纳指ETF（深交所）
     "usr_nvda",      // 英伟达（新浪美股）
     "usr_mrvl",      // 迈威尔科技
-    "BTC-USD",       // 比特币（Binance）
-    "MUBUSDT",       // 微策略代币（Binance）
+    "BTC/USDT",      // 比特币（Binance）
+    "MUB/USDT",      // 微策略代币（Binance）
     "fx_sjpycnh"     // 日元/离岸人民币
   ],
 
@@ -184,7 +185,7 @@ pnpm run compile
 ```
 配置 → fetchStocks(codes, premiumCodes)
   ├─ sh/sz/bj/hk/usr_/fx_ → 新浪 HTTPS（一次请求全部获取）
-  ├─ BTC-USD/MUBUSDT 等   → Binance data-api
+  ├─ BTC/USDT/MUB/USDT 等 → Binance data-api
   └─ premiumCodes          → 深交所 szse.cn（IOPV 溢价率）
 ```
 
