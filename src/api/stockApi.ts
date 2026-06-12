@@ -314,34 +314,39 @@ async function fetchFromBinance(symbols: string[]): Promise<Map<string, StockDat
 }
 
 // ============================================================
-// 数据源 3: 东方财富 ETF IOPV (push2.eastmoney.com)
-// 适用于: 用户指定的 ETF 代码（如 sz159501）获取实时参考净值
+// 数据源 3: 交易所 ETF IOPV
+// 深交所: https://www.szse.cn/api/market/ssjjhq/getTimeData?code={code}
+// 上交所: TODO（需要对应 API）
 // ============================================================
 
-/** 东方财富 IOPV 字段: f130=前日净值, f131=实时IOPV */
-const EM_FUND_FIELDS = 'f130,f131';
-
 /**
- * 从东方财富获取 ETF 实时参考净值（IOPV）
- * f131 ÷ 1000 = IOPV 值（如 1881 → 1.881）
+ * 从交易所官方 API 获取 ETF 实时参考净值（IOPV）
+ * 仅支持深交所（sz 前缀），返回 netValue 字段
  */
 async function fetchIopv(code: string): Promise<number | null> {
   try {
     const numCode = code.replace(/^(sh|sz|bj)/, '');
-    const market = code.startsWith('sz') ? 0 : 1;
+    // 仅深交所支持
+    if (!code.startsWith('sz')) return null;
+
     const resp = await smartGetText(
-      'push2.eastmoney.com',
-      `/api/qt/stock/get?secid=${market}.${numCode}&fields=${EM_FUND_FIELDS}`,
+      'www.szse.cn',
+      `/api/market/ssjjhq/getTimeData?random=${Math.random()}&marketId=1&code=${numCode}`,
       {
         useTls: true,
         timeoutMs: 5000,
-        headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://quote.eastmoney.com/' },
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          'Referer': 'https://www.szse.cn/market/trend/index.html',
+          'Accept': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
       },
     );
     const parsed = JSON.parse(resp.text);
-    const iopv = parsed?.data?.f131;
-    if (iopv && typeof iopv === 'number' && iopv > 0) {
-      return iopv / 1000;
+    const netValue = parsed?.data?.netValue;
+    if (netValue && parseFloat(netValue) > 0) {
+      return parseFloat(netValue);
     }
     return null;
   } catch (err) {
