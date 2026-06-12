@@ -149,8 +149,19 @@ export function extractFormatFields(template: string): FormatField[] {
   return fields;
 }
 
+/** 格式化时间，统一为东八区 CST (YYYY-MM-DD HH:MM:SS) */
+function formatCstTime(raw?: string): string {
+  if (raw && /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/.test(raw)) return raw;
+  return new Date().toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).replace(/\//g, '-');
+}
+
 /** 构建悬停提示文本 */
-export function buildTooltip(data: StockData): string {
+export function buildTooltip(data: StockData, precision?: number): string {
   const icon = getIcon(data.change);
   const lines = [
     `${data.name}（${data.code}）`,
@@ -159,23 +170,23 @@ export function buildTooltip(data: StockData): string {
 
   if (data.marketState && data.marketState !== 'REGULAR') {
     const stateLabel = data.marketState === 'PRE' ? '盘前' : data.marketState === 'POST' ? '盘后' : '夜盘';
-    lines.push(`📊 ${stateLabel} ${icon} 现价: ${formatPrice(data.price)}`);
+    lines.push(`📊 ${stateLabel} ${icon} 现价: ${formatPrice(data.price, precision)}`);
     lines.push(`  涨跌: ${formatChange(data.change)}（${formatPercent(data.changePercent)}）`);
-    lines.push(`  昨收: ${formatPrice(data.yestclose)}`);
+    lines.push(`  昨收: ${formatPrice(data.yestclose, precision)}`);
   } else {
-    lines.push(`${icon} 现价: ${formatPrice(data.price)}`);
+    lines.push(`${icon} 现价: ${formatPrice(data.price, precision)}`);
     lines.push(`  涨跌: ${formatChange(data.change)}（${formatPercent(data.changePercent)}）`);
-    lines.push(`  今开: ${formatPrice(data.open)}  昨收: ${formatPrice(data.yestclose)}`);
-    lines.push(`  最高: ${formatPrice(data.high)}  最低: ${formatPrice(data.low)}`);
+    lines.push(`  今开: ${formatPrice(data.open, precision)}  昨收: ${formatPrice(data.yestclose, precision)}`);
+    lines.push(`  最高: ${formatPrice(data.high, precision)}  最低: ${formatPrice(data.low, precision)}`);
   }
 
-  lines.push(`  时间: ${data.time}`);
+  lines.push(`  时间: ${formatCstTime(data.time)}`);
 
   // ETF 溢价率（需配置 premiumCodes 从交易所获取 IOPV）
   if (data.iopv && data.iopv > 0) {
     const premium = ((data.price - data.iopv) / data.iopv) * 100;
     const premiumIcon = premium > 0 ? '📈' : premium < 0 ? '📉' : '➡️';
-    lines.push(`  溢价: ${premiumIcon} ${formatPercent(premium)}  IOPV: ${formatPrice(data.iopv)}`);
+    lines.push(`  溢价: ${premiumIcon} ${formatPercent(premium)}  IOPV: ${formatPrice(data.iopv, precision)}`);
   }
 
   return lines.join('\n');

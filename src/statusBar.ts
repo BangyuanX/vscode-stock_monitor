@@ -94,7 +94,7 @@ export class StatusBarManager {
       const precision = prec >= 0 ? prec : undefined;
       const display = formatTicker(data, precision);
       const text = applyFormat(template, display);
-      const tooltip = buildTooltip(data);
+      const tooltip = buildTooltip(data, precision);
       const color = this.getColor(data.change);
 
       activeCodes.add(data.code);
