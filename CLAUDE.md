@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-VSCode 状态栏股票/加密货币监控扩展。每个品种独立显示在状态栏，支持 A 股、港股、美股（盘前/盘后/夜盘）和加密货币。
+VSCode 状态栏股票/加密货币/外汇监控扩展。每个品种独立显示在状态栏，支持 A 股、港股、美股（盘前/盘后/夜盘）、加密货币、外汇汇率。
 
 ## Build & Dev
 
@@ -39,23 +39,49 @@ npx @vscode/vsce package --no-dependencies --allow-missing-repository --skip-lic
 ```
 VSCode 配置 (stock-bar.codes)
     ↓
-config.ts → 解析 → AppConfig { stockCodes, format, precision... }
+config.ts → 解析 → AppConfig { stockCodes, format, precision, premiumCodes, priceScale... }
     ↓
-extension.ts (activate → showLoading → refreshAll → setInterval)
+extension.ts (activate → refreshAll → setInterval)
     ↓
-stockApi.ts → 按前缀分流：
-  ├─ Tencent (qt.gtimg.cn): sh/sz/bj/hk → GBK 编码，~分隔字段
-  └─ Yahoo v7 (query1.finance.yahoo.com): usr_ + 无前缀
-       └─ 回退 → Sina (hq.sinajs.cn): gb_ 前缀
+stockApi.ts → fetchStocks(codes, premiumCodes):
+  ├─ 新浪 HTTPS (hq.sinajs.cn): sh/sz/bj/hk/usr_/fx_ → GBK 解码
+  │    ├─ sh/sz/bj/hk → parseSinaCnFields
+  │    ├─ usr_       → parseSinaUsFields（含盘前/盘后判断）
+  │    └─ fx_        → parseSinaForexFields
+  ├─ Binance data-api: BTC-USD/MUBUSDT 等
+  └─ 东财/深交所: premiumCodes 中 ETF 的 IOPV
     ↓
 StatusBarManager ← statusBar.ts
-  ├─ showLoading(): $(loading~spin) 占位
-  └─ update(): 创建/更新/销毁 StatusBarItem（左对齐，按优先级排列）
+  ├─ update(): 创建/更新/销毁 StatusBarItem
+  │   格式：formatTicker(data, precision, scale) → applyFormat(template)
+  │   悬浮：buildTooltip(data, precision)
+  └─ 左对齐，优先级从 100 递减
 ```
 
 ### 网络层
 
-`directHttp.ts` 实现底层 HTTP(S) GET，不使用 `fetch` 或 `axios`，而是基于 `net`/`tls` socket 直接构建请求报文（支持 chunked transfer-encoding、GBK 解码）。内置代理支持：优先 VSCode 设置 `http.proxy`，回退环境变量（Clash 等），代理失败自动回退直连并缓存 2 分钟避让期。
+`directHttp.ts` 实现底层 HTTP(S) GET，基于 `net`/`tls` socket 直接构建请求报文（支持 chunked transfer-encoding、增量 HTTP 响应解析、不依赖 connection close 事件、GBK 解码）。无代理依赖，全程直连。
+
+### 数据源
+
+| 市场 | 数据源 | 协议 | 说明 |
+|------|--------|------|------|
+| A 股/港股 | `hq.sinajs.cn` | HTTPS | 新浪财经，GBK 解码 |
+| 美股（含盘前/盘后） | `hq.sinajs.cn` | HTTPS | 新浪 `usr_` 前缀，根据美东时间自动判断时段 |
+| 外汇 | `hq.sinajs.cn` | HTTPS | 新浪 `fx_` 前缀 |
+| 加密货币 | `data-api.binance.vision` | HTTPS | Binance 官方，24hr ticker |
+| ETF IOPV | `push2.eastmoney.com` / `szse.cn` | HTTPS | 东方财富 / 深交所 |
+
+### 美股交易时段判断
+
+新浪不直接提供 `marketState` 字段，通过 `getEtSession()` 根据美东时间判断：
+
+| 时段 | 美东时间 | 状态栏标记 | 价格来源 |
+|------|---------|-----------|---------|
+| 盘前 | 4:00 - 9:30 | 🌅 | `fields[21]`（盘前价格） |
+| 盘中 | 9:30 - 16:00 | （无） | `fields[1]`（实时价格） |
+| 盘后 | 16:00 - 20:00 | 🌙 | `fields[21]`（盘后价格） |
+| 夜盘 | 20:00 - 4:00 | 🌃 | `fields[21]`（夜盘价格） |
 
 ### 文件职责
 
@@ -65,19 +91,19 @@ StatusBarManager ← statusBar.ts
 | `config.ts` | 读取 VSCode 配置 → AppConfig |
 | `statusBar.ts` | StatusBarManager：创建/更新/销毁状态栏项 |
 | `types.ts` | 类型定义 + 格式化函数（formatPrice/formatPercent/buildTooltip） |
-| `api/stockApi.ts` | 数据源路由（腾讯 → Yahoo v7 → 新浪回退） |
-| `api/directHttp.ts` | 原始 socket HTTP 客户端（代理/Cookie/编码解码） |
-
-### Market Sessions（美股交易时段）
-
-Yahoo v7 按 `marketState` 字段自动切换价格来源：
-- `REGULAR` → regularMarketPrice
-- `PRE` → preMarketPrice (🌅)
-- `POST` → postMarketPrice (🌙)
-- `OVERNIGHT` → overnightMarketPrice (🌃)
-
-Yahoo v7 需要 cookie (A1) + crumb 认证，获取后缓存复用。Cookie 失效时自动清除并重试。
+| `api/stockApi.ts` | 数据源路由（新浪 → Binance → IOPV） |
+| `api/directHttp.ts` | 原始 socket HTTP 客户端（增量解析、GBK 解码） |
 
 ### StatusBar 优先级
 
 所有项左对齐，优先级从 `100` 递减（第一项优先级最高）。加载占位优先级 `100`。
+
+### 关键配置项
+
+| 配置 | 类型 | 说明 |
+|------|------|------|
+| `codes` | `string[]` | 监控品种列表 |
+| `format` | `string` | 显示模板，支持 `${icon}${name}${price}${change}${percent}${code}${session}` |
+| `precision` | `object` | 小数位数覆盖，key 为品种代码 |
+| `scale` | `object` | 显示乘数（如 `fx_sjpycnh: 100`） |
+| `premiumCodes` | `string[]` | 需要显示 ETF 溢价率的代码（tooltip 中查看） |
