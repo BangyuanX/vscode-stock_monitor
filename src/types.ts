@@ -170,5 +170,13 @@ export function buildTooltip(data: StockData): string {
   }
 
   lines.push(`  时间: ${data.time}`);
+
+  // ETF 溢价率（需配置 premiumCodes 从交易所获取 IOPV）
+  if (data.iopv && data.iopv > 0) {
+    const premium = ((data.price - data.iopv) / data.iopv) * 100;
+    const premiumIcon = premium > 0 ? '📈' : premium < 0 ? '📉' : '➡️';
+    lines.push(`  溢价: ${premiumIcon} ${formatPercent(premium)}  IOPV: ${formatPrice(data.iopv)}`);
+  }
+
   return lines.join('\n');
 }
