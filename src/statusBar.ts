@@ -13,6 +13,7 @@ export class StatusBarManager {
   private maxItems: number = 6;
   private precision: Record<string, number> = {};
   private defaultPrecision: number = -1;
+  private priceScale: Record<string, number> = {};
 
   /** 占位状态栏项（加载中提示） */
   private loadingItem?: vscode.StatusBarItem;
@@ -63,6 +64,10 @@ export class StatusBarManager {
     this.defaultPrecision = defaultPrecision;
   }
 
+  setScale(scale: Record<string, number>): void {
+    this.priceScale = scale;
+  }
+
   /**
    * 批量更新状态栏显示
    * @param dataList 行情数据列表
@@ -89,10 +94,11 @@ export class StatusBarManager {
         continue;
       }
 
-      // 按代码查找精度，没有则用默认值
+      // 按代码查找精度和显示乘数
       const prec = this.precision[data.code] ?? this.defaultPrecision;
       const precision = prec >= 0 ? prec : undefined;
-      const display = formatTicker(data, precision);
+      const scale = this.priceScale[data.code] || 1;
+      const display = formatTicker(data, precision, scale);
       const text = applyFormat(template, display);
       const tooltip = buildTooltip(data, precision);
       const color = this.getColor(data.change);

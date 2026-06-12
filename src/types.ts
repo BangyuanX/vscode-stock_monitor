@@ -52,6 +52,7 @@ export interface AppConfig {
   precision: Record<string, number>; // 代码 → 小数位数
   defaultPrecision: number;          // 默认小数位数
   premiumCodes: string[];            // 需要显示 ETF 溢价率的代码列表
+  priceScale: Record<string, number>; // 代码 → 显示乘数（如 fx_sjpycnh: 100）
 }
 
 /** 标准化的模板占位符配置（用于构建格式化输出） */
@@ -101,11 +102,12 @@ export function formatPercent(percent: number): string {
 }
 
 /** 格式化所有字段为显示对象 */
-export function formatTicker(data: StockData, precision?: number): TickerDisplay {
+export function formatTicker(data: StockData, precision?: number, scale?: number): TickerDisplay {
+  const displayPrice = scale ? data.price * scale : data.price;
   return {
     code: data.code,
     name: data.name,
-    price: formatPrice(data.price, precision),
+    price: formatPrice(displayPrice, precision),
     change: formatChange(data.change),
     percent: formatPercent(data.changePercent),
     icon: getIcon(data.change),

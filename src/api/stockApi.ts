@@ -234,14 +234,16 @@ function parseSinaUsFields(code: string, fields: string[]): StockData | null {
  * 解析新浪外汇返回的字段
  */
 function parseSinaForexFields(code: string, fields: string[]): StockData | null {
-  if (fields.length < 10) return null;
+  if (fields.length < 12) return null;
   const price = parseFloat(fields[1]);
   if (isNaN(price)) return null;
 
-  const name = fields[8] || code;
+  // 新浪外汇字段：0=时间 1=买入价 2=卖出价 3=今开 4=成交量
+  // 5=最高 6=最低 7=昨收 8=前日收盘 9=名称 10=涨跌幅 11=涨跌额
+  const name = fields[9] || code;
   const yestclose = parseFloat(fields[7]) || price;
-  const change = parseFloat(fields[10]);
-  const changePercent = parseFloat(fields[9]);
+  const change = parseFloat(fields[11]);
+  const changePercent = parseFloat(fields[10]);
   const high = parseFloat(fields[5]) || price;
   const low = parseFloat(fields[6]) || price;
   const open = parseFloat(fields[3]) || yestclose;

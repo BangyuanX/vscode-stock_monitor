@@ -105,6 +105,7 @@ function applyConfig(context: vscode.ExtensionContext): void {
   statusBarManager.setColors(config.riseColor, config.fallColor, config.flatColor);
   statusBarManager.setMaxItems(config.maxItems);
   statusBarManager.setPrecision(config.precision, config.defaultPrecision);
+  statusBarManager.setScale(config.priceScale);
 
   // 重启轮询（如果间隔变化）
   restartPolling(config.interval);
@@ -115,6 +116,7 @@ function applyConfig(context: vscode.ExtensionContext): void {
     statusBarManager.setColors(newConfig.riseColor, newConfig.fallColor, newConfig.flatColor);
     statusBarManager.setMaxItems(newConfig.maxItems);
     statusBarManager.setPrecision(newConfig.precision, newConfig.defaultPrecision);
+    statusBarManager.setScale(newConfig.priceScale);
     restartPolling(newConfig.interval);
     refreshAll();
   }, context);
