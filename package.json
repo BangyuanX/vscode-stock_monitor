@@ -88,6 +88,14 @@
           "type": "string",
           "default": "",
           "description": "平盘时的文字颜色（留空使用默认颜色）"
+        },
+        "stock-bar.premiumCodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "需要显示 ETF 溢价率的品种代码（如 sz159501）。溢价率 = (市价 - IOPV) ÷ IOPV × 100%，需在 format 中添加 ${premium} 占位符"
         }
       }
     }
