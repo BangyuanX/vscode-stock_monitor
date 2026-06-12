@@ -1,5 +1,3 @@
-import * as http from 'http';
-import * as https from 'https';
 import * as net from 'net';
 import * as tls from 'tls';
 import * as dns from 'dns';
@@ -37,60 +35,6 @@ export interface HttpOptions {
   timeoutMs?: number;
   /** 响应编码，仅 smartGetText 使用 */
   encoding?: string;
-}
-
-// ============================================================
-// 内部：使用 Node.js 标准 http/https 模块请求（与 Leek Fund 一致）
-// 正确处理 keep-alive、chunked 编码、Content-Length，不依赖连接关闭
-// ============================================================
-
-/**
- * 使用 Node.js 标准 http/https 模块发送 GET 请求
- * 底层与 axios/Leek Fund 一致，正确解析 HTTP 响应（不依赖 connection close）
- */
-function httpNativeRequest(
-  hostname: string,
-  path: string,
-  useTls: boolean,
-  headers: Record<string, string>,
-  timeoutMs: number,
-): Promise<DirectHttpResponse> {
-  return new Promise((resolve, reject) => {
-    const mod = useTls ? https : http;
-    const req = mod.request(
-      `${useTls ? 'https' : 'http'}://${hostname}${path}`,
-      {
-        method: 'GET',
-        headers,
-        timeout: timeoutMs,
-        rejectUnauthorized: true,
-        agent: false, // 绕过 VSCode 全局代理，直连目标服务器
-      },
-      (res: http.IncomingMessage) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (chunk: string | Buffer) => chunks.push(Buffer.from(chunk)));
-        res.on('end', () => {
-          const respHeaders: Record<string, string> = {};
-          for (const [k, v] of Object.entries(res.headers)) {
-            if (k && v) {
-              respHeaders[k] = Array.isArray(v) ? v.join('\n') : String(v);
-            }
-          }
-          resolve({
-            statusCode: res.statusCode ?? 0,
-            body: Buffer.concat(chunks),
-            headers: respHeaders,
-          });
-        });
-      },
-    );
-    req.on('error', (e) => reject(new Error(`请求失败: ${e.message}`)));
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error(`timeout (${timeoutMs}ms)`));
-    });
-    req.end();
-  });
 }
 
 interface ProxyConfig {
@@ -241,6 +185,13 @@ function parseHttpResponse(
 // 内部：构建 HTTP 请求报文并发送
 // ============================================================
 
+/**
+ * 通过已建立的 socket 发送 HTTP GET 请求并解析响应。
+ *
+ * 与 Leek Fund 的 axios/http 模块一致，在 data 事件中增量解析 HTTP 响应，
+ * 根据 Content-Length 或 Transfer-Encoding: chunked 判断响应是否完整，
+ * 不依赖 socket end 事件（避免 keep-alive 连接永不触发 end）。
+ */
 function sendGetRequest(
   sock: net.Socket | tls.TLSSocket,
   method: 'DIRECT' | 'PROXY',
@@ -250,26 +201,36 @@ function sendGetRequest(
   timeoutMs: number,
 ): Promise<DirectHttpResponse> {
   return new Promise((resolve, reject) => {
-    let timer: NodeJS.Timeout | null = setTimeout(() => {
+    let cleaned = false;
+    let resolved = false;
+    let accumulated = Buffer.alloc(0);
+    let headerEnd = -1;
+
+    const timer = setTimeout(() => {
       cleanup();
       reject(new Error(`timeout (${timeoutMs}ms)`));
     }, timeoutMs);
-    let cleaned = false;
 
     function cleanup(): void {
       if (cleaned) return;
       cleaned = true;
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
+      clearTimeout(timer);
       sock.destroy();
     }
 
+    function tryComplete(): void {
+      if (resolved || cleaned) return;
+      if (headerEnd < 0) return; // 头还没收完
+
+      const body = accumulated.subarray(headerEnd + 4);
+      if (body.length === 0) return; // 没有 body 数据
+
+      resolved = true;
+      cleanup();
+      parseHttpResponse(accumulated, () => {/* ignore late errors */}, resolve);
+    }
+
     // 构造请求行
-    //   DIRECT:  GET /path HTTP/1.1
-    //   PROXY (HTTP):  GET http://hostname/path HTTP/1.1
-    //   PROXY (CONNECT/HTTPS): GET /path HTTP/1.1 (隧道建立后直接用相对路径)
     const isConnectTunnel = method === 'PROXY' && sock instanceof tls.TLSSocket;
     const requestPath = isConnectTunnel ? path : method === 'PROXY' ? `http://${hostname}${path}` : path;
 
@@ -283,13 +244,85 @@ function sendGetRequest(
       '',
     ].join('\r\n');
 
-    const chunks: Buffer[] = [];
-    sock.on('data', (chunk: Buffer) => chunks.push(chunk));
-    sock.once('end', () => {
-      cleanup();
-      parseHttpResponse(Buffer.concat(chunks), reject, resolve);
+    sock.on('data', (chunk: Buffer) => {
+      if (resolved || cleaned) return;
+      accumulated = Buffer.concat([accumulated, chunk]);
+
+      // 还没有找到头尾，找找看
+      if (headerEnd < 0) {
+        headerEnd = accumulated.indexOf('\r\n\r\n');
+      }
+
+      if (headerEnd >= 0) {
+        // 解析头找 Content-Length 或 Transfer-Encoding
+        if (!(accumulated as any)._headersParsed) {
+          (accumulated as any)._headersParsed = true;
+          const headerPart = accumulated.subarray(0, headerEnd).toString('utf8');
+          const headerLines_ = headerPart.split('\r\n');
+          let contentLength = -1;
+          let isChunked = false;
+          for (let i = 1; i < headerLines_.length; i++) {
+            const lower = headerLines_[i].toLowerCase();
+            if (lower.startsWith('content-length:')) {
+              contentLength = parseInt(headerLines_[i].split(':')[1].trim(), 10);
+            }
+            if (lower.startsWith('transfer-encoding:') && lower.includes('chunked')) {
+              isChunked = true;
+            }
+          }
+
+          const bodyOffset = headerEnd + 4;
+          const body = accumulated.subarray(bodyOffset);
+
+          if (isChunked) {
+            // chunked：检查是否收到结束块 0\r\n\r\n
+            if (body.length >= 5 && body.subarray(body.length - 5).toString() === '0\r\n\r\n') {
+              resolved = true;
+              cleanup();
+              parseHttpResponse(accumulated, () => {}, resolve);
+              return;
+            }
+          } else if (contentLength >= 0) {
+            // Content-Length：检查 body 长度是否足够
+            if (body.length >= contentLength) {
+              resolved = true;
+              cleanup();
+              parseHttpResponse(accumulated, () => {}, resolve);
+              return;
+            }
+          } else {
+            // 既没有 Content-Length 也没有 chunked：等 end 事件
+            tryComplete();
+          }
+        }
+
+        // 二次检查：chunked 模式可能后续数据包完成
+        if (!resolved && (accumulated as any)._isChunked !== false) {
+          // 检查 chunked 是否完整
+          const body = accumulated.subarray(headerEnd + 4);
+          if (body.length >= 5 && body.subarray(body.length - 5).toString() === '0\r\n\r\n') {
+            resolved = true;
+            cleanup();
+            parseHttpResponse(accumulated, () => {}, resolve);
+          }
+        }
+      }
     });
+
+    sock.once('end', () => {
+      if (resolved || cleaned) return;
+      // end 触发时尚未完成（无 Content-Length 且非 chunked）
+      resolved = true;
+      cleanup();
+      if (headerEnd >= 0) {
+        parseHttpResponse(accumulated, reject, resolve);
+      } else {
+        reject(new Error(`非HTTP响应: ${accumulated.toString('utf8').substring(0, 100)}`));
+      }
+    });
+
     sock.once('error', (e) => {
+      if (resolved || cleaned) return;
       cleanup();
       reject(new Error(`套接字错误: ${e.message}`));
     });
@@ -514,7 +547,8 @@ async function smartGetInternal(
 }
 
 /**
- * 执行单次 HTTP 请求（代理优先，失败回退直连）
+ * 执行单次 HTTP GET 请求（直连，不走代理）
+ * 使用 raw socket + 增量 HTTP 解析，与 Leek Fund 的 axios 行为一致
  */
 async function httpFetchOne(
   hostname: string,
@@ -524,38 +558,8 @@ async function httpFetchOne(
   timeoutMs: number,
   headers: Record<string, string>,
 ): Promise<DirectHttpResponse> {
-  const proxy = getVscodeProxy();
-
-  async function attemptDirect(): Promise<DirectHttpResponse> {
-    return await httpNativeRequest(hostname, path, useTls, headers, timeoutMs);
-  }
-
-  async function attemptProxy(): Promise<DirectHttpResponse> {
-    const sock = await proxyConnect(proxy!, hostname, port, useTls);
-    return await sendGetRequest(sock, 'PROXY', hostname, path, headers, timeoutMs);
-  }
-
-  if (!proxy) {
-    return attemptDirect();
-  }
-
-  if (shouldSkipProxy(proxy)) {
-    return attemptDirect();
-  }
-
-  return attemptProxy()
-    .then((result) => {
-      markProxyOk();
-      return result;
-    })
-    .catch((err) => {
-      markProxyFailed(proxy);
-      console.warn(
-        `[StockBar] 代理 ${proxy.host}:${proxy.port} 不可用 (${err.message}), ` +
-          `回退到直连，${PROXY_RETRY_MS / 60_000} 分钟内不再尝试代理`,
-      );
-      return attemptDirect();
-    });
+  const sock = await directConnect(hostname, port, useTls, timeoutMs);
+  return await sendGetRequest(sock, 'DIRECT', hostname, path, headers, timeoutMs);
 }
 
 // ============================================================
