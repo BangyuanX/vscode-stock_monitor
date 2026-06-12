@@ -253,14 +253,24 @@ function directConnect(
   hostname: string,
   port: number,
   useTls: boolean,
+  timeoutMs: number,
 ): Promise<net.Socket | tls.TLSSocket> {
   return new Promise((resolve, reject) => {
     const netSocket = new net.Socket();
     let cleaned = false;
 
+    // 连接超时保护：timeoutMs 内未建立连接则拒绝
+    const connTimer = setTimeout(() => {
+      if (cleaned) return;
+      cleaned = true;
+      netSocket.destroy();
+      reject(new Error(`连接超时 (${timeoutMs}ms): ${hostname}:${port}`));
+    }, timeoutMs);
+
     function cleanup(): void {
       if (cleaned) return;
       cleaned = true;
+      clearTimeout(connTimer);
       netSocket.destroy();
     }
 
@@ -461,7 +471,7 @@ async function httpFetchOne(
   const proxy = getVscodeProxy();
 
   async function attemptDirect(): Promise<DirectHttpResponse> {
-    const sock = await directConnect(hostname, port, useTls);
+    const sock = await directConnect(hostname, port, useTls, timeoutMs);
     return await sendGetRequest(sock, 'DIRECT', hostname, path, headers, timeoutMs);
   }
 
@@ -560,7 +570,7 @@ export async function directGet(
   const timeoutMs = options?.timeoutMs ?? 10000;
   const headers: Record<string, string> = { ...options?.headers };
 
-  const sock = await directConnect(hostname, port, useTls);
+  const sock = await directConnect(hostname, port, useTls, timeoutMs);
   return await sendGetRequest(sock, 'DIRECT', hostname, path, headers, timeoutMs);
 }
 

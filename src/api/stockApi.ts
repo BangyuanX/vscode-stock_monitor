@@ -67,7 +67,10 @@ async function fetchFromSinaUs(symbols: string[]): Promise<Map<string, StockData
       useTls: false, // 公司网络封锁新浪 HTTPS 但放行 HTTP
       timeoutMs: 10000,
       encoding: 'gbk',
-      headers: { 'Referer': 'http://finance.sina.com.cn' },
+      headers: {
+        'Referer': 'http://finance.sina.com.cn',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
     });
 
     let match: RegExpExecArray | null;
@@ -390,6 +393,9 @@ async function fetchFromTencent(codes: string[]): Promise<Map<string, StockData>
       useTls: true,
       encoding: 'gbk',
       timeoutMs: 10000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
     });
 
     let match: RegExpExecArray | null;
