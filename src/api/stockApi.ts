@@ -287,7 +287,9 @@ function extractBaseCurrency(symbol: string): string {
 
 /**
  * 将常见代码格式转为 Binance 交易对
- * BTC-USD → BTCUSDT,  BTC/USDT → BTCUSDT,  crypto:BTCUSDT → BTCUSDT
+ * BTC/USDT → BTCUSDT（推荐格式）
+ * BTC-USD → BTCUSDT（兼容）
+ * crypto:BTCUSDT → BTCUSDT（兼容旧配置）
  */
 function toBinanceSymbol(code: string): string {
   if (code.startsWith('crypto:')) {
@@ -414,7 +416,7 @@ async function fetchIopv(code: string): Promise<number | null> {
  * 批量获取行情
  *
  * - sh/sz/bj/hk/usr_ → 新浪 HTTPS（统一数据源）
- * - 其他（BTC-USD、MUBUSDT 等）→ Binance data-api
+ * - 其他（BTC/USDT、MUBUSDT 等）→ Binance data-api
  * - premiumCodes 中的代码额外从东财获取 IOPV（溢价率用）
  *
  * @param codes 股票代码数组

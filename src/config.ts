@@ -25,7 +25,7 @@ export function readConfig(): AppConfig {
   const priceScale = config.get<Record<string, number>>('scale', {});
 
   // 所有代码统一走 stockCodes
-  // 支持格式：usr_NVDA（新浪美股）、BTCUSDT/BTC-USD（Binance 加密货币/美股代币）等
+  // 推荐格式：usr_NVDA（新浪美股）、BTC/USDT（Binance 加密货币/美股代币）
   const stockCodes: string[] = [];
   const cryptoSymbols: string[] = [];
 
@@ -34,16 +34,8 @@ export function readConfig(): AppConfig {
     if (!trimmed) continue;
 
     if (trimmed.startsWith('crypto:')) {
-      // Yahoo 格式：BTC-USD（带横杠）
-      // 兼容旧配置：BTCUSDT（OKX 格式，无横杠）
-      let symbol = trimmed.substring(7).trim().toUpperCase();
-      if (symbol) {
-        // BTCUSDT → BTC-USD（USDT 后缀转 Yahoo 格式）
-        if (!symbol.includes('-') && symbol.endsWith('USDT') && symbol.length > 4) {
-          symbol = symbol.slice(0, -4) + '-USD';
-        }
-        stockCodes.push(symbol);
-      }
+      // 兼容旧配置：crypto:BTCUSDT → 去掉前缀, 后续由 toBinanceSymbol 统一处理
+      stockCodes.push(trimmed.substring(7));
     } else {
       stockCodes.push(trimmed);
     }
