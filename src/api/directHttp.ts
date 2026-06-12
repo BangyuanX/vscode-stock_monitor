@@ -7,11 +7,6 @@ import * as iconv from 'iconv-lite';
 // 优先 IPv4 — 家庭网络常因 IPv6 配置不佳导致超时
 dns.setDefaultResultOrder('ipv4first');
 
-// 使用公共 DNS 解析域名（公司网络可能屏蔽特定 API 域名）
-// 创建自定义 Resolver 而非全局 setServers，避免干扰其他 DNS 查询
-const customDns = new dns.Resolver();
-customDns.setServers(['8.8.8.8', '1.1.1.1']);
-
 /**
  * 统一 HTTP(S) 请求 — 支持先试代理、失败回退直连。
  *
@@ -252,50 +247,12 @@ function sendGetRequest(
 // ============================================================
 
 /**
- * 使用自定义 DNS 解析主机名（绕过公司 DNS 封锁），然后连接
+ * 直连（原始 TCP/TLS — 使用系统 DNS 解析，与 Leek Fund 一致）
  */
-function resolveAndConnect(
+function directConnect(
   hostname: string,
   port: number,
   useTls: boolean,
-): Promise<net.Socket | tls.TLSSocket> {
-  // 如果 hostname 已经是 IP 地址或数字格式，直接连接
-  const isIp = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
-  if (isIp) {
-    return directConnectRaw(hostname, port, useTls, hostname);
-  }
-
-  return new Promise((resolve, reject) => {
-    // 用自定义 DNS 解析（公司 DNS 可能屏蔽 API 域名）
-    customDns.resolve4(hostname, (err, addresses) => {
-      if (err || !addresses || addresses.length === 0) {
-        // 自定义 DNS 失败时回退系统 DNS
-        return directConnectRaw(hostname, port, useTls, hostname)
-          .then(resolve)
-          .catch(reject);
-      }
-      // 用解析到的 IP 直连（保留原始 hostname 用于 TLS SNI）
-      directConnectRaw(addresses[0], port, useTls, hostname)
-        .then(resolve)
-        .catch((e) => {
-          // IP 直连失败，回退系统 DNS
-          console.warn(`[StockBar] 自定义 DNS ${hostname} -> ${addresses[0]} 失败，回退系统 DNS: ${e.message}`);
-          directConnectRaw(hostname, port, useTls, hostname)
-            .then(resolve)
-            .catch(reject);
-        });
-    });
-  });
-}
-
-/**
- * 原始 TCP/TLS 连接（不包含 DNS 解析）
- */
-function directConnectRaw(
-  target: string,
-  port: number,
-  useTls: boolean,
-  servername: string,
 ): Promise<net.Socket | tls.TLSSocket> {
   return new Promise((resolve, reject) => {
     const netSocket = new net.Socket();
@@ -308,16 +265,16 @@ function directConnectRaw(
     }
 
     if (!useTls) {
-      netSocket.connect(port, target, () => {
+      netSocket.connect(port, hostname, () => {
         resolve(netSocket);
       });
     } else {
-      netSocket.connect(port, target, () => {
+      netSocket.connect(port, hostname, () => {
         const tlsSocket = tls.connect(
           {
             socket: netSocket,
-            host: servername,
-            servername,
+            host: hostname,
+            servername: hostname,
             rejectUnauthorized: true,
           },
           () => resolve(tlsSocket),
@@ -504,7 +461,7 @@ async function httpFetchOne(
   const proxy = getVscodeProxy();
 
   async function attemptDirect(): Promise<DirectHttpResponse> {
-    const sock = await resolveAndConnect(hostname, port, useTls);
+    const sock = await directConnect(hostname, port, useTls);
     return await sendGetRequest(sock, 'DIRECT', hostname, path, headers, timeoutMs);
   }
 
@@ -603,7 +560,7 @@ export async function directGet(
   const timeoutMs = options?.timeoutMs ?? 10000;
   const headers: Record<string, string> = { ...options?.headers };
 
-  const sock = await resolveAndConnect(hostname, port, useTls);
+  const sock = await directConnect(hostname, port, useTls);
   return await sendGetRequest(sock, 'DIRECT', hostname, path, headers, timeoutMs);
 }
 

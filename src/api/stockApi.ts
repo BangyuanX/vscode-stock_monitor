@@ -198,19 +198,36 @@ function parseSinaUsFields(symbol: string, fields: string[]): StockData | null {
 
 
 /**
+ * 从交易对中提取基础货币名用于显示
+ * BTCUSDT → BTC,  BTC-USD → BTC,  MUBUSDT → MU,  NVDABUSDT → NVDA
+ */
+function extractBaseCurrency(symbol: string): string {
+  const upper = symbol.toUpperCase();
+  // 去掉常见的报价货币后缀
+  for (const quote of ['USDT', 'BUSD', 'USD', 'USDC']) {
+    if (upper.endsWith(quote) && upper.length > quote.length) {
+      return upper.slice(0, -quote.length);
+    }
+  }
+  // 去掉 - （如 BTC-USD → BTCUSD → BTC）
+  return upper.replace(/-/g, '').replace(/USDT|BUSD|USD.*$/, '');
+}
+
+/**
  * 将常见代码格式转为 Binance 交易对
- * BTC-USD → BTCUSDT,  BTCUSDT → BTCUSDT,  crypto:BTC → BTCUSDT
+ * BTC-USD → BTCUSDT,  BTCUSDT → BTCUSDT,  BTC/USDT → BTCUSDT,  crypto:BTCUSDT → BTCUSDT
  */
 function toBinanceSymbol(code: string): string {
   // crypto:BTCUSDT → BTCUSDT
   if (code.startsWith('crypto:')) {
     const sym = code.substring(7);
-    // crypto:BTC → BTCUSDT
     if (!sym.endsWith('USDT') && !sym.endsWith('BUSD')) return sym + 'USDT';
     return sym;
   }
+  // BTC/USDT → BTCUSDT
+  let upper = code.toUpperCase().replace(/[/\\]/g, '');
   // BTC-USD → BTCUSDT
-  const upper = code.toUpperCase().replace(/-/g, '');
+  upper = upper.replace(/-/g, '');
   if (upper.endsWith('USD') && !upper.endsWith('USDT')) return upper + 'T';
   return upper;
 }
@@ -264,7 +281,7 @@ async function fetchFromBinance(symbols: string[]): Promise<Map<string, StockDat
       const sym = ticker.symbol;
       result.set(sym, {
         code: sym,
-        name: sym,
+        name: extractBaseCurrency(sym), // BTCUSDT → BTC, MUBUSDT → MU
         price,
         change: isNaN(priceChange) ? 0 : priceChange,
         changePercent,
@@ -370,7 +387,7 @@ async function fetchFromTencent(codes: string[]): Promise<Map<string, StockData>
   try {
     const path = '/q=' + codes.join(',');
     const { text } = await smartGetText('qt.gtimg.cn', path, {
-      useTls: false,
+      useTls: true,
       encoding: 'gbk',
       timeoutMs: 10000,
     });
