@@ -16,6 +16,8 @@ export interface StockData {
   marketState?: MarketState; // 交易时段（盘前/盘中/盘后）
   /** 获取失败时的错误信息（非空表示该品种获取失败） */
   error?: string;
+  /** ETF 实时参考净值（IOPV），用于计算溢价率 */
+  iopv?: number;
 }
 
 /** 格式化后的展示数据 */
@@ -27,10 +29,11 @@ export interface TickerDisplay {
   percent: string;
   icon: string;
   session: string;    // 交易时段标记（🌅/🌙/空）
+  premium: string;    // ETF 溢价率（如 +8.67%）
 }
 
 /** 支持的模板占位符 */
-export type FormatField = 'icon' | 'name' | 'price' | 'change' | 'percent' | 'code' | 'session';
+export type FormatField = 'icon' | 'name' | 'price' | 'change' | 'percent' | 'code' | 'session' | 'premium';
 
 /** 品种类型 */
 export type TickerType = 'stock' | 'crypto';
@@ -48,6 +51,7 @@ export interface AppConfig {
   flatColor: string;
   precision: Record<string, number>; // 代码 → 小数位数
   defaultPrecision: number;          // 默认小数位数
+  premiumCodes: string[];            // 需要显示 ETF 溢价率的代码列表
 }
 
 /** 标准化的模板占位符配置（用于构建格式化输出） */
@@ -59,6 +63,7 @@ export const FORMAT_FIELDS: Record<FormatField, string> = {
   percent: '${percent}',
   code: '${code}',
   session: '${session}',
+  premium: '${premium}',
 };
 
 /** 获取交易时段图标 */
@@ -105,6 +110,7 @@ export function formatTicker(data: StockData, precision?: number): TickerDisplay
     percent: formatPercent(data.changePercent),
     icon: getIcon(data.change),
     session: getSessionIcon(data.marketState),
+    premium: data.iopv ? formatPercent((data.price / data.iopv - 1) * 100) : '',
   };
 }
 
@@ -117,7 +123,8 @@ export function applyFormat(template: string, display: TickerDisplay): string {
     .replace(/\$\{change\}/g, display.change)
     .replace(/\$\{percent\}/g, display.percent)
     .replace(/\$\{code\}/g, display.code)
-    .replace(/\$\{session\}/g, display.session);
+    .replace(/\$\{session\}/g, display.session)
+    .replace(/\$\{premium\}/g, display.premium);
 }
 
 /** 从模板字符串中提取使用的字段 */
@@ -131,6 +138,7 @@ export function extractFormatFields(template: string): FormatField[] {
     [/\$\{percent\}/g, 'percent'],
     [/\$\{code\}/g, 'code'],
     [/\$\{session\}/g, 'session'],
+    [/\$\{premium\}/g, 'premium'],
   ];
   for (const [re, field] of fieldMap) {
     re.lastIndex = 0;

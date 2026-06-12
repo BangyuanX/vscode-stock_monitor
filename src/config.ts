@@ -21,6 +21,7 @@ export function readConfig(): AppConfig {
   const flatColor = config.get<string>('flatColor', '');
   const precision = config.get<Record<string, number>>('precision', {});
   const defaultPrecisionVal = precision['default'] ?? -1;
+  const premiumCodes = config.get<string[]>('premiumCodes', []);
 
   // 所有代码统一走 stockCodes
   // 支持格式：usr_NVDA（新浪美股）、BTCUSDT/BTC-USD（Binance 加密货币/美股代币）等
@@ -61,6 +62,7 @@ export function readConfig(): AppConfig {
     flatColor,
     precision,
     defaultPrecision: defaultPrecisionVal,
+    premiumCodes,
   };
 }
 

@@ -314,6 +314,43 @@ async function fetchFromBinance(symbols: string[]): Promise<Map<string, StockDat
 }
 
 // ============================================================
+// 数据源 3: 东方财富 ETF IOPV (push2.eastmoney.com)
+// 适用于: 用户指定的 ETF 代码（如 sz159501）获取实时参考净值
+// ============================================================
+
+/** 东方财富 IOPV 字段: f130=前日净值, f131=实时IOPV */
+const EM_FUND_FIELDS = 'f130,f131';
+
+/**
+ * 从东方财富获取 ETF 实时参考净值（IOPV）
+ * f131 ÷ 1000 = IOPV 值（如 1881 → 1.881）
+ */
+async function fetchIopv(code: string): Promise<number | null> {
+  try {
+    const numCode = code.replace(/^(sh|sz|bj)/, '');
+    const market = code.startsWith('sz') ? 0 : 1;
+    const resp = await smartGetText(
+      'push2.eastmoney.com',
+      `/api/qt/stock/get?secid=${market}.${numCode}&fields=${EM_FUND_FIELDS}`,
+      {
+        useTls: true,
+        timeoutMs: 5000,
+        headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://quote.eastmoney.com/' },
+      },
+    );
+    const parsed = JSON.parse(resp.text);
+    const iopv = parsed?.data?.f131;
+    if (iopv && typeof iopv === 'number' && iopv > 0) {
+      return iopv / 1000;
+    }
+    return null;
+  } catch (err) {
+    console.log(`[StockBar] IOPV 获取失败 (${code}):`, err);
+    return null;
+  }
+}
+
+// ============================================================
 // 路由 & 主入口
 // ============================================================
 
@@ -322,11 +359,13 @@ async function fetchFromBinance(symbols: string[]): Promise<Map<string, StockDat
  *
  * - sh/sz/bj/hk/usr_ → 新浪 HTTPS（统一数据源）
  * - 其他（BTC-USD、MUBUSDT 等）→ Binance data-api
+ * - premiumCodes 中的代码额外从东财获取 IOPV（溢价率用）
  *
  * @param codes 股票代码数组
+ * @param premiumCodes 需要显示溢价率的代码列表
  * @returns Map<code, StockData>
  */
-export async function fetchStocks(codes: string[]): Promise<Map<string, StockData>> {
+export async function fetchStocks(codes: string[], premiumCodes?: string[]): Promise<Map<string, StockData>> {
   const result = new Map<string, StockData>();
   if (codes.length === 0) return result;
 
@@ -355,6 +394,18 @@ export async function fetchStocks(codes: string[]): Promise<Map<string, StockDat
       result.set(originalCode, data);
     } else {
       result.set(sym, data);
+    }
+  }
+
+  // 用户指定的 ETF 溢价率代码：从东方财富获取 IOPV
+  if (premiumCodes && premiumCodes.length > 0) {
+    for (const code of premiumCodes) {
+      const stock = result.get(code);
+      if (!stock || stock.error) continue; // 没有行情数据则跳过
+      const iopv = await fetchIopv(code);
+      if (iopv && iopv > 0) {
+        stock.iopv = iopv;
+      }
     }
   }
 

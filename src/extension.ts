@@ -131,8 +131,8 @@ async function refreshAll(): Promise<void> {
     const config = readConfig();
     const allData: StockData[] = [];
 
-    // 统一通过 Yahoo v7 + 腾讯获取所有品种数据
-    const stockMap = await fetchStocks(config.stockCodes);
+    // 统一通过新浪 + Binance 获取所有品种数据
+    const stockMap = await fetchStocks(config.stockCodes, config.premiumCodes);
 
     // 按配置顺序排列
     for (const code of config.stockCodes) {
