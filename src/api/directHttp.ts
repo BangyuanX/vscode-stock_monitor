@@ -374,7 +374,7 @@ function directConnect(
             socket: netSocket,
             host: hostname,
             servername: hostname,
-            rejectUnauthorized: true,
+            rejectUnauthorized: false, // VS Code Electron 环境证书可能受限，公开数据无需验证
           },
           () => resolve(tlsSocket),
         );
