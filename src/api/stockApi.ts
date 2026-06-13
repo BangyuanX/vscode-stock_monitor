@@ -303,7 +303,52 @@ function toBinanceSymbol(code: string): string {
 }
 
 /**
+ * 从 Binance 获取日K线开盘价（东八区 8:00 / UTC 00:00 基准）
+ * 用于替代 24hr 滚动窗口计算当日涨跌
+ *
+ * klines 返回: [openTime, open, high, low, close, volume, ...]
+ * interval=1d 每根K线从 UTC 00:00 开始，对应东八区 08:00
+ */
+async function fetchBinanceDailyKlines(symbols: string[]): Promise<Map<string, { open: number; high: number; low: number; close: number }>> {
+  const result = new Map<string, { open: number; high: number; low: number; close: number }>();
+  if (symbols.length === 0) return result;
+
+  await Promise.all(symbols.map(async (sym) => {
+    try {
+      const resp = await smartGetJson<any[][]>(
+        'data-api.binance.vision',
+        `/api/v3/klines?symbol=${encodeURIComponent(sym)}&interval=1d&limit=1`,
+        {
+          useTls: true,
+          timeoutMs: 10000,
+          headers: { 'Accept': 'application/json' },
+        },
+      );
+      const kline = resp.data?.[0];
+      if (kline && kline.length >= 5) {
+        const open = parseFloat(kline[1]);
+        const high = parseFloat(kline[2]);
+        const low = parseFloat(kline[3]);
+        const close = parseFloat(kline[4]);
+        if (!isNaN(open) && !isNaN(high) && !isNaN(low) && open > 0) {
+          result.set(sym, { open, high, low, close });
+        }
+      }
+    } catch (err) {
+      console.warn(`[StockBar] Binance 日K线获取失败 (${sym}):`, err);
+    }
+  }));
+
+  return result;
+}
+
+/**
  * 从 Binance data-api 获取行情
+ *
+ * 涨跌计算以每日东八区 8:00（UTC 00:00）为临界点：
+ *   涨跌额 = 当前价 - 当日开盘价
+ *   涨跌幅 = 涨跌额 / 当日开盘价 × 100%
+ * 获取日K线失败时回退到 Binance 24hr 滚动窗口。
  */
 async function fetchFromBinance(symbols: string[]): Promise<Map<string, StockData>> {
   const result = new Map<string, StockData>();
@@ -333,27 +378,53 @@ async function fetchFromBinance(symbols: string[]): Promise<Map<string, StockDat
       return result;
     }
 
+    // 获取日K线数据，以东八区 8:00（UTC 00:00）开盘价为涨跌基准
+    const dailyKlines = await fetchBinanceDailyKlines(binancePairs);
+
     for (const ticker of tickers) {
       const price = parseFloat(ticker.lastPrice);
       if (isNaN(price)) continue;
 
-      const priceChange = parseFloat(ticker.priceChange);
-      const priceChangePercent = parseFloat(ticker.priceChangePercent);
-      const high = parseFloat(ticker.highPrice) || price;
-      const low = parseFloat(ticker.lowPrice) || price;
-      const yestclose = price - (isNaN(priceChange) ? 0 : priceChange);
-      const changePercent = isNaN(priceChangePercent) ? 0 : priceChangePercent;
-
       const sym = ticker.symbol;
+      const kline = dailyKlines.get(sym);
+
+      let priceChange: number;
+      let priceChangePercent: number;
+      let yestclose: number;
+      let openPrice: number;
+      let high: number;
+      let low: number;
+
+      if (kline && kline.open > 0) {
+        // 使用日K线开盘价（东八区 8:00）作为当日涨跌基准
+        openPrice = kline.open;
+        priceChange = price - openPrice;
+        priceChangePercent = (priceChange / openPrice) * 100;
+        yestclose = openPrice;
+        high = !isNaN(kline.high) ? kline.high : (parseFloat(ticker.highPrice) || price);
+        low = !isNaN(kline.low) ? kline.low : (parseFloat(ticker.lowPrice) || price);
+      } else {
+        // 回退到 Binance 24hr 滚动窗口
+        const tickerChange = parseFloat(ticker.priceChange);
+        const tickerChangePercent = parseFloat(ticker.priceChangePercent);
+        const tickerYestclose = price - (isNaN(tickerChange) ? 0 : tickerChange);
+        openPrice = tickerYestclose;
+        priceChange = isNaN(tickerChange) ? 0 : tickerChange;
+        priceChangePercent = isNaN(tickerChangePercent) ? 0 : tickerChangePercent;
+        yestclose = tickerYestclose;
+        high = parseFloat(ticker.highPrice) || price;
+        low = parseFloat(ticker.lowPrice) || price;
+      }
+
       result.set(sym, {
         code: sym,
         name: extractBaseCurrency(sym),
         price,
-        change: isNaN(priceChange) ? 0 : priceChange,
-        changePercent,
+        change: priceChange,
+        changePercent: parseFloat(priceChangePercent.toFixed(2)),
         high,
         low,
-        open: yestclose,
+        open: openPrice,
         yestclose: yestclose > 0 ? yestclose : price,
         time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
         marketState: 'REGULAR',

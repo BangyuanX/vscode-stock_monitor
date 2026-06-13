@@ -69,7 +69,8 @@ StatusBarManager ← statusBar.ts
 | A 股/港股 | `hq.sinajs.cn` | HTTPS | 新浪财经，GBK 解码 |
 | 美股（含盘前/盘后） | `hq.sinajs.cn` | HTTPS | 新浪 `usr_` 前缀，根据美东时间自动判断时段 |
 | 外汇 | `hq.sinajs.cn` | HTTPS | 新浪 `fx_` 前缀 |
-| 加密货币 | `data-api.binance.vision` | HTTPS | Binance 官方，24hr ticker |
+| 加密货币 | `data-api.binance.vision` | HTTPS | Binance 官方，24hr ticker + 日K线 |
+| 涨跌基准 | `data-api.binance.vision` | HTTPS | Binance 日K线 `interval=1d`，以东八区 8:00（UTC 00:00）开盘价为当日基准 |
 | ETF IOPV | `push2.eastmoney.com` / `szse.cn` | HTTPS | 东方财富 / 深交所 |
 
 ### 美股交易时段判断
