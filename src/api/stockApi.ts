@@ -72,8 +72,9 @@ async function fetchFromSina(codes: string[]): Promise<Map<string, StockData>> {
     const symbolList = codes.join(',');
     const { text } = await smartGetText('hq.sinajs.cn', `/list=${symbolList}`, {
       useTls: true,
-      timeoutMs: 10000,
+      timeoutMs: 30000, // 新浪服务器响应较慢（实测 17-26s），需更大超时
       encoding: 'gbk',
+      resolveDns: true, // 预解析 DNS 到 IP，绕过部分网络环境对 hostname 的干扰
       headers: {
         'Referer': 'http://finance.sina.com.cn',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',

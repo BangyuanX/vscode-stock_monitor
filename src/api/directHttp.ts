@@ -35,6 +35,16 @@ export interface HttpOptions {
   timeoutMs?: number;
   /** 响应编码，仅 smartGetText 使用 */
   encoding?: string;
+  /**
+   * 预解析 DNS 到 IP 后连接（代替 `net.Socket.connect` 内部 DNS 解析）
+   *
+   * 部分网络环境（如国内运营商 DNS / GFW）会对 hostname 层面的 TCP 连接进行
+   * 干扰导致超时。启用此选项后，先通过 `dns.resolve4()` 获取 IP，再连接 IP，
+   * Host 头和 TLS SNI 仍使用原始 hostname。
+   *
+   * 仅推荐在明确遇到 hostname 连接超时问题的数据源使用。
+   */
+  resolveDns?: boolean;
 }
 
 interface ProxyConfig {
@@ -336,14 +346,34 @@ function sendGetRequest(
 // ============================================================
 
 /**
- * 直连（原始 TCP/TLS — 使用系统 DNS 解析，与 Leek Fund 一致）
+ * 直连（原始 TCP/TLS — 支持 DNS 预解析 + 系统 DNS 解析双模式）
+ *
+ * 默认使用 `net.Socket.connect()` 内部 DNS 解析（系统 getaddrinfo）。
+ * 当 resolveDns 为 true 时，先通过 `dns.resolve4()` 预解析 hostname
+ * 到 IP，再连接 IP 地址，Host 头和 TLS SNI 仍使用原始 hostname。
+ *
+ * 预解析模式用于绕过部分网络环境对 hostname 层面 TCP 连接的干扰。
  */
-function directConnect(
+async function directConnect(
   hostname: string,
   port: number,
   useTls: boolean,
   timeoutMs: number,
+  resolveDns?: boolean,
 ): Promise<net.Socket | tls.TLSSocket> {
+  // 可选：预解析 DNS 到 IP，避免 hostname 层面连接被干扰
+  let connectTarget = hostname;
+  if (resolveDns) {
+    try {
+      const addresses = await dns.promises.resolve4(hostname);
+      if (addresses && addresses.length > 0) {
+        connectTarget = addresses[0];
+      }
+    } catch {
+      // DNS 预解析失败，回退到 hostname 连接
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const netSocket = new net.Socket();
     let cleaned = false;
@@ -364,15 +394,15 @@ function directConnect(
     }
 
     if (!useTls) {
-      netSocket.connect(port, hostname, () => {
+      netSocket.connect(port, connectTarget, () => {
         resolve(netSocket);
       });
     } else {
-      netSocket.connect(port, hostname, () => {
+      netSocket.connect(port, connectTarget, () => {
         const tlsSocket = tls.connect(
           {
             socket: netSocket,
-            host: hostname,
+            host: hostname,       // TLS SNI 仍用原始 hostname
             servername: hostname,
             rejectUnauthorized: false, // VS Code Electron 环境证书可能受限，公开数据无需验证
           },
@@ -519,6 +549,7 @@ async function smartGetInternal(
   const timeoutMs = options?.timeoutMs ?? 10000;
   const headers: Record<string, string> = { ...options?.headers };
 
+  const resolveDns = options?.resolveDns ?? false;
   const MAX_REDIRECTS = 5;
   let currentHost = hostname;
   let currentPath = path;
@@ -526,7 +557,7 @@ async function smartGetInternal(
   let currentPort = port;
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
-    const response = await httpFetchOne(currentHost, currentPath, currentTls, currentPort, timeoutMs, headers);
+    const response = await httpFetchOne(currentHost, currentPath, currentTls, currentPort, timeoutMs, headers, resolveDns);
 
     // 跟随 3xx 重定向（Yahoo 可能因地区/语言重定向）
     if (response.statusCode >= 300 && response.statusCode < 400 && response.headers?.location) {
@@ -557,8 +588,9 @@ async function httpFetchOne(
   port: number,
   timeoutMs: number,
   headers: Record<string, string>,
+  resolveDns?: boolean,
 ): Promise<DirectHttpResponse> {
-  const sock = await directConnect(hostname, port, useTls, timeoutMs);
+  const sock = await directConnect(hostname, port, useTls, timeoutMs, resolveDns);
   return await sendGetRequest(sock, 'DIRECT', hostname, path, headers, timeoutMs);
 }
 
