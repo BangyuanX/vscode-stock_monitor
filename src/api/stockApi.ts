@@ -1,5 +1,41 @@
 import { StockData, MarketState } from '../types';
+import { isSinaCode } from '../market';
 import { smartGetText, smartGetJson } from './directHttp';
+
+const SINA_BATCH_SIZE = 20;
+const SINA_BATCH_CONCURRENCY = 2;
+const BINANCE_BATCH_SIZE = 20;
+const BINANCE_KLINE_CONCURRENCY = 5;
+const BINANCE_KLINE_CACHE_MS = 60_000;
+
+function chunkArray<T>(items: readonly T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function runWorker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex++;
+      results[currentIndex] = await worker(items[currentIndex], currentIndex);
+    }
+  }
+
+  const workerCount = Math.min(Math.max(1, limit), items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return results;
+}
 
 // ============================================================
 // 数据源 1: 新浪财经行情 API (hq.sinajs.cn) — HTTPS
@@ -54,16 +90,13 @@ import { smartGetText, smartGetJson } from './directHttp';
 /** 新浪行情正则：var hq_str_sh000001="..." / var hq_str_usr_nvda="..." */
 const SINA_ALL_RE = /var hq_str_([a-z0-9_]+)="([^"]*)";/g;
 
-/** 新浪支持的股票前缀 */
-const SINA_PREFIXES = ['sh', 'sz', 'bj', 'hk', 'usr_', 'fx_'];
-
 /** 美股前缀 */
 const USR_PREFIX = 'usr_';
 
 /**
  * 从新浪财经获取行情（A股/港股/美股，一次请求全部获取）
  */
-async function fetchFromSina(codes: string[]): Promise<Map<string, StockData>> {
+async function fetchSinaBatch(codes: string[]): Promise<Map<string, StockData>> {
   const result = new Map<string, StockData>();
   if (codes.length === 0) return result;
 
@@ -93,8 +126,11 @@ async function fetchFromSina(codes: string[]): Promise<Map<string, StockData>> {
       } else if (code.startsWith('fx_')) {
         // 外汇：fx_susdcny / fx_sjpycnh
         data = parseSinaForexFields(code, fields);
+      } else if (code.startsWith('hk')) {
+        // 港股：hk00700 / hk02513
+        data = parseSinaHkFields(code, fields);
       } else {
-        // A股/港股：sh000001 / sz000001 / hk00700
+        // A股：sh000001 / sz000001 / bj830799
         data = parseSinaCnFields(code, fields);
       }
       if (data) result.set(code, data);
@@ -103,6 +139,21 @@ async function fetchFromSina(codes: string[]): Promise<Map<string, StockData>> {
     console.error(`[StockBar] 新浪行情请求失败:`, err);
   }
 
+  return result;
+}
+
+/** 分批获取新浪行情，单批失败不会影响其他批次 */
+async function fetchFromSina(codes: string[]): Promise<Map<string, StockData>> {
+  const result = new Map<string, StockData>();
+  const batches = chunkArray(codes, SINA_BATCH_SIZE);
+  const batchResults = await mapWithConcurrency(
+    batches,
+    SINA_BATCH_CONCURRENCY,
+    batch => fetchSinaBatch(batch),
+  );
+  for (const batchResult of batchResults) {
+    for (const [code, data] of batchResult) result.set(code, data);
+  }
   return result;
 }
 
@@ -122,7 +173,7 @@ function getEtSession(): MarketState {
 }
 
 /**
- * 解析新浪 A股/港股 返回字段
+ * 解析新浪 A 股返回字段
  */
 function parseSinaCnFields(code: string, fields: string[]): StockData | null {
   if (fields.length < 33) return null;
@@ -153,6 +204,42 @@ function parseSinaCnFields(code: string, fields: string[]): StockData | null {
     open,
     yestclose,
     time,
+  };
+}
+
+/**
+ * 解析新浪港股返回字段。
+ *
+ * 0=英文简称 1=中文名称 2=今开 3=昨收 4=最高 5=最低
+ * 6=最新价 7=涨跌额 8=涨跌幅 17=日期 18=时间
+ */
+export function parseSinaHkFields(code: string, fields: string[]): StockData | null {
+  if (fields.length < 19) return null;
+  const price = parseFloat(fields[6]);
+  const yestclose = parseFloat(fields[3]);
+  if (isNaN(price) || isNaN(yestclose)) return null;
+
+  const calculatedChange = price - yestclose;
+  const parsedChange = parseFloat(fields[7]);
+  const parsedChangePercent = parseFloat(fields[8]);
+  const change = isNaN(parsedChange) ? calculatedChange : parsedChange;
+  const changePercent = isNaN(parsedChangePercent)
+    ? (yestclose > 0 ? (calculatedChange / yestclose) * 100 : 0)
+    : parsedChangePercent;
+  const date = fields[17]?.replace(/\//g, '-');
+
+  return {
+    code,
+    name: fields[1] || fields[0] || code,
+    price,
+    change,
+    changePercent: parseFloat(changePercent.toFixed(2)),
+    high: parseFloat(fields[4]) || price,
+    low: parseFloat(fields[5]) || price,
+    open: parseFloat(fields[2]) || yestclose,
+    yestclose,
+    time: date && fields[18] ? `${date} ${fields[18]}` : (fields[18] || ''),
+    delayed: true,
   };
 }
 
@@ -303,6 +390,28 @@ function toBinanceSymbol(code: string): string {
   return upper;
 }
 
+interface BinanceDailyKline {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+interface BinanceTicker {
+  symbol: string;
+  lastPrice: string;
+  priceChange: string;
+  priceChangePercent: string;
+  highPrice: string;
+  lowPrice: string;
+  volume: string;
+}
+
+const binanceKlineCache = new Map<string, {
+  data: BinanceDailyKline;
+  expiresAt: number;
+}>();
+
 /**
  * 从 Binance 获取日K线开盘价（东八区 8:00 / UTC 00:00 基准）
  * 用于替代 24hr 滚动窗口计算当日涨跌
@@ -310,11 +419,22 @@ function toBinanceSymbol(code: string): string {
  * klines 返回: [openTime, open, high, low, close, volume, ...]
  * interval=1d 每根K线从 UTC 00:00 开始，对应东八区 08:00
  */
-async function fetchBinanceDailyKlines(symbols: string[]): Promise<Map<string, { open: number; high: number; low: number; close: number }>> {
-  const result = new Map<string, { open: number; high: number; low: number; close: number }>();
+async function fetchBinanceDailyKlines(symbols: string[]): Promise<Map<string, BinanceDailyKline>> {
+  const result = new Map<string, BinanceDailyKline>();
   if (symbols.length === 0) return result;
 
-  await Promise.all(symbols.map(async (sym) => {
+  const now = Date.now();
+  const symbolsToFetch: string[] = [];
+  for (const sym of new Set(symbols)) {
+    const cached = binanceKlineCache.get(sym);
+    if (cached && cached.expiresAt > now) {
+      result.set(sym, cached.data);
+    } else {
+      symbolsToFetch.push(sym);
+    }
+  }
+
+  await mapWithConcurrency(symbolsToFetch, BINANCE_KLINE_CONCURRENCY, async sym => {
     try {
       const resp = await smartGetJson<any[][]>(
         'data-api.binance.vision',
@@ -332,15 +452,43 @@ async function fetchBinanceDailyKlines(symbols: string[]): Promise<Map<string, {
         const low = parseFloat(kline[3]);
         const close = parseFloat(kline[4]);
         if (!isNaN(open) && !isNaN(high) && !isNaN(low) && open > 0) {
-          result.set(sym, { open, high, low, close });
+          const data = { open, high, low, close };
+          result.set(sym, data);
+          binanceKlineCache.set(sym, {
+            data,
+            expiresAt: Date.now() + BINANCE_KLINE_CACHE_MS,
+          });
         }
       }
     } catch (err) {
       console.warn(`[StockBar] Binance 日K线获取失败 (${sym}):`, err);
+      const stale = binanceKlineCache.get(sym);
+      if (stale) result.set(sym, stale.data);
     }
-  }));
+  });
 
   return result;
+}
+
+/** 单批获取 Binance 24 小时行情 */
+async function fetchBinanceTickerBatch(symbols: string[]): Promise<BinanceTicker[]> {
+  try {
+    const symbolsParam = JSON.stringify(symbols);
+    const resp = await smartGetJson<BinanceTicker[]>(
+      'data-api.binance.vision',
+      `/api/v3/ticker/24hr?symbols=${encodeURIComponent(symbolsParam)}`,
+      {
+        useTls: true,
+        timeoutMs: 10000,
+        headers: { 'Accept': 'application/json' },
+      },
+    );
+    if (Array.isArray(resp.data)) return resp.data;
+    console.warn(`[StockBar] Binance 返回格式异常 (${symbols.join(', ')})`);
+  } catch (err) {
+    console.error(`[StockBar] Binance 行情批次请求失败 (${symbols.join(', ')}):`, err);
+  }
+  return [];
 }
 
 /**
@@ -355,32 +503,15 @@ async function fetchFromBinance(symbols: string[]): Promise<Map<string, StockDat
   const result = new Map<string, StockData>();
   if (symbols.length === 0) return result;
 
-  const binancePairs = symbols.map(s => toBinanceSymbol(s));
+  const binancePairs = Array.from(new Set(symbols.map(s => toBinanceSymbol(s))));
 
   try {
-    const symbolsParam = JSON.stringify(binancePairs);
-    const resp = await smartGetJson<Array<{
-      symbol: string;
-      lastPrice: string;
-      priceChange: string;
-      priceChangePercent: string;
-      highPrice: string;
-      lowPrice: string;
-      volume: string;
-    }>>('data-api.binance.vision', `/api/v3/ticker/24hr?symbols=${encodeURIComponent(symbolsParam)}`, {
-      useTls: true,
-      timeoutMs: 10000,
-      headers: { 'Accept': 'application/json' },
-    });
-
-    const tickers = resp.data;
-    if (!Array.isArray(tickers)) {
-      console.warn(`[StockBar] Binance 返回格式异常`);
-      return result;
-    }
+    const tickerBatches = chunkArray(binancePairs, BINANCE_BATCH_SIZE);
+    const batchResults = await Promise.all(tickerBatches.map(fetchBinanceTickerBatch));
+    const tickers = batchResults.flat();
 
     // 获取日K线数据，以东八区 8:00（UTC 00:00）开盘价为涨跌基准
-    const dailyKlines = await fetchBinanceDailyKlines(binancePairs);
+    const dailyKlines = await fetchBinanceDailyKlines(tickers.map(ticker => ticker.symbol));
 
     for (const ticker of tickers) {
       const price = parseFloat(ticker.lastPrice);
@@ -487,7 +618,7 @@ async function fetchIopv(code: string): Promise<number | null> {
 /**
  * 批量获取行情
  *
- * - sh/sz/bj/hk/usr_ → 新浪 HTTPS（统一数据源）
+ * - sh/sz/bj/hk/usr_/fx_ → 新浪 HTTPS（统一数据源）
  * - 其他（BTC/USDT、MUBUSDT 等）→ Binance data-api
  * - premiumCodes 中的代码额外从东财获取 IOPV（溢价率用）
  *
@@ -503,7 +634,7 @@ export async function fetchStocks(codes: string[], premiumCodes?: string[]): Pro
   const binanceCodes: string[] = [];
 
   for (const code of codes) {
-    if (SINA_PREFIXES.some(p => code.startsWith(p))) {
+    if (isSinaCode(code)) {
       sinaCodes.push(code);
     } else {
       // 无前缀代码（BTC-USD、BTCUSDT、MUBUSDT 等）→ Binance
@@ -511,20 +642,18 @@ export async function fetchStocks(codes: string[], premiumCodes?: string[]): Pro
     }
   }
 
-  // 所有传统股票：新浪 HTTPS（一次请求）
-  const sinaResult = await fetchFromSina(sinaCodes);
+  // 不同数据源并行获取；各数据源内部负责分批和并发限制
+  const [sinaResult, binanceResult] = await Promise.all([
+    fetchFromSina(sinaCodes),
+    fetchFromBinance(binanceCodes),
+  ]);
+
   for (const [code, data] of sinaResult) result.set(code, data);
 
   // 加密货币/美股代币：Binance data-api
-  const binanceResult = await fetchFromBinance(binanceCodes);
-  for (const [sym, data] of binanceResult) {
-    const originalCode = binanceCodes.find(c => toBinanceSymbol(c) === sym);
-    if (originalCode) {
-      data.code = originalCode;
-      result.set(originalCode, data);
-    } else {
-      result.set(sym, data);
-    }
+  for (const originalCode of binanceCodes) {
+    const data = binanceResult.get(toBinanceSymbol(originalCode));
+    if (data) result.set(originalCode, { ...data, code: originalCode });
   }
 
   // 用户指定的 ETF 溢价率代码：从东方财富获取 IOPV

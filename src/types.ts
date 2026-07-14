@@ -18,6 +18,8 @@ export interface StockData {
   error?: string;
   /** ETF 实时参考净值（IOPV），用于计算溢价率 */
   iopv?: number;
+  /** 数据源明确提供的是延迟行情 */
+  delayed?: boolean;
 }
 
 /** 格式化后的展示数据 */
@@ -41,6 +43,7 @@ export type TickerType = 'stock' | 'crypto';
 /** 解析后的配置 */
 export interface AppConfig {
   stockCodes: string[];        // 股票代码（sh/sz/hk/usr_）
+  statusBarCodes: string[] | null; // null 表示状态栏沿用前 maxItems 个
   cryptoSymbols: string[];     // 加密货币交易对（BTCUSDT）
   interval: number;            // 刷新间隔（秒）
   format: string;              // 模板字符串
@@ -53,6 +56,7 @@ export interface AppConfig {
   defaultPrecision: number;          // 默认小数位数
   premiumCodes: string[];            // 需要显示 ETF 溢价率的代码列表
   priceScale: Record<string, number>; // 代码 → 显示乘数（如 fx_sjpycnh: 100）
+  holdings: Record<string, number>;   // A 股代码 → 持仓股数
 }
 
 /** 标准化的模板占位符配置（用于构建格式化输出） */
@@ -103,14 +107,15 @@ export function formatPercent(percent: number): string {
 
 /** 格式化所有字段为显示对象 */
 export function formatTicker(data: StockData, precision?: number, scale?: number): TickerDisplay {
-  const displayPrice = scale ? data.price * scale : data.price;
+  const multiplier = scale || 1;
+  const displayPrice = data.price * multiplier;
   return {
     code: data.code,
     name: data.name,
     price: formatPrice(displayPrice, precision),
-    change: formatChange(data.change),
+    change: formatChange(data.change * multiplier),
     percent: formatPercent(data.changePercent),
-    icon: getIcon(data.change),
+    icon: getIcon(data.changePercent),
     session: getSessionIcon(data.marketState),
     premium: data.iopv ? formatPercent((data.price / data.iopv - 1) * 100) : '',
   };
@@ -163,23 +168,34 @@ function formatCstTime(raw?: string): string {
 }
 
 /** 构建悬停提示文本 */
-export function buildTooltip(data: StockData, precision?: number): string {
-  const icon = getIcon(data.change);
+export function buildTooltip(data: StockData, precision?: number, scale?: number): string {
+  const multiplier = scale || 1;
+  const price = data.price * multiplier;
+  const change = data.change * multiplier;
+  const high = data.high * multiplier;
+  const low = data.low * multiplier;
+  const open = data.open * multiplier;
+  const yestclose = data.yestclose * multiplier;
+  const icon = getIcon(data.changePercent);
   const lines = [
     `${data.name}（${data.code}）`,
     `---`,
   ];
 
+  if (data.delayed) {
+    lines.push('🟡 D 延迟行情（通常至少延迟约 15 分钟）');
+  }
+
   if (data.marketState && data.marketState !== 'REGULAR') {
     const stateLabel = data.marketState === 'PRE' ? '盘前' : data.marketState === 'POST' ? '盘后' : '夜盘';
-    lines.push(`📊 ${stateLabel} ${icon} 现价: ${formatPrice(data.price, precision)}`);
-    lines.push(`  涨跌: ${formatChange(data.change)}（${formatPercent(data.changePercent)}）`);
-    lines.push(`  昨收: ${formatPrice(data.yestclose, precision)}`);
+    lines.push(`📊 ${stateLabel} ${icon} 现价: ${formatPrice(price, precision)}`);
+    lines.push(`  涨跌: ${formatChange(change)}（${formatPercent(data.changePercent)}）`);
+    lines.push(`  昨收: ${formatPrice(yestclose, precision)}`);
   } else {
-    lines.push(`${icon} 现价: ${formatPrice(data.price, precision)}`);
-    lines.push(`  涨跌: ${formatChange(data.change)}（${formatPercent(data.changePercent)}）`);
-    lines.push(`  今开: ${formatPrice(data.open, precision)}  昨收: ${formatPrice(data.yestclose, precision)}`);
-    lines.push(`  最高: ${formatPrice(data.high, precision)}  最低: ${formatPrice(data.low, precision)}`);
+    lines.push(`${icon} 现价: ${formatPrice(price, precision)}`);
+    lines.push(`  涨跌: ${formatChange(change)}（${formatPercent(data.changePercent)}）`);
+    lines.push(`  今开: ${formatPrice(open, precision)}  昨收: ${formatPrice(yestclose, precision)}`);
+    lines.push(`  最高: ${formatPrice(high, precision)}  最低: ${formatPrice(low, precision)}`);
   }
 
   lines.push(`  时间: ${formatCstTime(data.time)}`);
@@ -188,7 +204,7 @@ export function buildTooltip(data: StockData, precision?: number): string {
   if (data.iopv && data.iopv > 0) {
     const premium = ((data.price - data.iopv) / data.iopv) * 100;
     const premiumIcon = premium > 0 ? '📈' : premium < 0 ? '📉' : '➡️';
-    lines.push(`  溢价: ${premiumIcon} ${formatPercent(premium)}  IOPV: ${formatPrice(data.iopv, precision)}`);
+    lines.push(`  溢价: ${premiumIcon} ${formatPercent(premium)}  IOPV: ${formatPrice(data.iopv * multiplier, precision)}`);
   }
 
   return lines.join('\n');

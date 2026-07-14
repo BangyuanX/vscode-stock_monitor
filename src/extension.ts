@@ -1,23 +1,53 @@
 import * as vscode from 'vscode';
-import { readConfig, onConfigChanged } from './config';
+import {
+  getEffectiveStatusBarCodes,
+  getSidebarOrderedCodes,
+  normalizeConfiguredCode,
+  onConfigChanged,
+  readConfig,
+} from './config';
+import { classifyMarket } from './market';
 import { fetchStocks } from './api/stockApi';
 import { StatusBarManager } from './statusBar';
+import { SidebarManager } from './sidebar';
+import { SyncStateManager } from './syncState';
 import { StockData } from './types';
+import { HoldingsManager, calculateDailyPnl } from './holdings';
 
 let statusBarManager: StatusBarManager;
+let sidebarManager: SidebarManager;
+let syncStateManager: SyncStateManager;
+let holdingsManager: HoldingsManager;
 let pollingTimer: NodeJS.Timeout | null = null;
 let isRefreshing = false;
+let refreshPending = false;
+let latestDataByCode = new Map<string, StockData>();
 
-export function activate(context: vscode.ExtensionContext) {
+interface CodeQuickPickItem extends vscode.QuickPickItem {
+  code: string;
+}
+
+export async function activate(context: vscode.ExtensionContext) {
   console.log('[StockBar] 扩展已激活');
+
+  await removeObsoleteSidebarCodesSetting();
+  syncStateManager = new SyncStateManager(context);
+  await syncStateManager.initialize();
 
   // 创建状态栏管理器
   statusBarManager = new StatusBarManager();
+  sidebarManager = new SidebarManager({
+    toggleStatusBar,
+    removeTicker: removeTickerFromSidebar,
+    moveTicker: moveTickerRelative,
+    setPrecision: managePrecision,
+  });
+  holdingsManager = new HoldingsManager(updateHoldings);
 
   // 注册命令
   context.subscriptions.push(
     vscode.commands.registerCommand('stock-bar.refresh', () => {
-      refreshAll();
+      void refreshAll();
     }),
   );
 
@@ -35,21 +65,20 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('stock-bar.addCode', async () => {
       const code = await vscode.window.showInputBox({
         prompt: '输入要监控的品种代码',
-        placeHolder: '示例: sh000001, hk00700, usr_aapl, crypto:BTCUSDT',
+        placeHolder: '示例: sh000001, hk00700, usr_aapl, BTC/USDT',
         ignoreFocusOut: true,
       });
       if (!code) return;
       const config = vscode.workspace.getConfiguration('stock-bar');
       const codes = config.get<string[]>('codes', []);
-      const trimmed = code.trim();
-      if (codes.includes(trimmed)) {
-        vscode.window.showInformationMessage(`「${trimmed}」已在监控列表中`);
+      const normalized = normalizeConfiguredCode(code);
+      if (!normalized) return;
+      if (codes.some(existing => normalizeConfiguredCode(existing) === normalized)) {
+        vscode.window.showInformationMessage(`「${normalized}」已在监控列表中`);
         return;
       }
-      codes.push(trimmed);
-      await config.update('codes', codes, vscode.ConfigurationTarget.Global);
-      vscode.window.showInformationMessage(`已添加「${trimmed}」`);
-      refreshAll();
+      await updateCodes([...codes, normalized]);
+      vscode.window.showInformationMessage(`已添加「${normalized}」`);
     }),
   );
 
@@ -67,23 +96,30 @@ export function activate(context: vscode.ExtensionContext) {
         canPickMany: true,
       });
       if (!selected || selected.length === 0) return;
-      const newCodes = codes.filter(c => !selected.includes(c));
-      await config.update('codes', newCodes, vscode.ConfigurationTarget.Global);
+      await removeCodes(selected);
       vscode.window.showInformationMessage(
         `已移除 ${selected.length} 个品种`,
       );
-      refreshAll();
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('stock-bar.managePrecision', () => managePrecision()),
+    vscode.commands.registerCommand('stock-bar.syncNow', () => syncStateManager.syncNow()),
+    vscode.commands.registerCommand('stock-bar.manageHoldings', () => {
+      holdingsManager.show(readConfig(), latestDataByCode);
     }),
   );
 
   // 显示初始加载状态
   statusBarManager.showLoading();
+  sidebarManager.showLoading();
 
   // 应用配置
   applyConfig(context);
 
   // 初次刷新
-  refreshAll();
+  void refreshAll();
 
   console.log('[StockBar] 扩展初始化完成');
 }
@@ -94,6 +130,208 @@ export function deactivate() {
   if (statusBarManager) {
     statusBarManager.dispose();
   }
+  if (sidebarManager) {
+    sidebarManager.dispose();
+  }
+  if (syncStateManager) {
+    syncStateManager.dispose();
+  }
+  if (holdingsManager) {
+    holdingsManager.dispose();
+  }
+}
+
+async function updateCodes(codes: string[]): Promise<void> {
+  const config = vscode.workspace.getConfiguration('stock-bar');
+  await config.update('codes', codes, vscode.ConfigurationTarget.Global);
+}
+
+async function removeObsoleteSidebarCodesSetting(): Promise<void> {
+  const config = vscode.workspace.getConfiguration('stock-bar');
+  const inspected = config.inspect<string[] | null>('sidebarCodes');
+  if (!inspected) return;
+  if (inspected.globalValue !== undefined) {
+    await config.update('sidebarCodes', undefined, vscode.ConfigurationTarget.Global);
+  }
+  if (inspected.workspaceValue !== undefined) {
+    await config.update('sidebarCodes', undefined, vscode.ConfigurationTarget.Workspace);
+  }
+  if (inspected.workspaceFolderValue !== undefined) {
+    await config.update('sidebarCodes', undefined, vscode.ConfigurationTarget.WorkspaceFolder);
+  }
+}
+
+async function updateStatusBarCodes(codes: string[] | null): Promise<void> {
+  const config = vscode.workspace.getConfiguration('stock-bar');
+  const normalized = codes === null
+    ? null
+    : Array.from(new Set(codes.map(normalizeConfiguredCode).filter(Boolean)));
+  await config.update('statusBarCodes', normalized, vscode.ConfigurationTarget.Global);
+  renderLatestData();
+}
+
+async function updateHoldings(holdings: Record<string, number>): Promise<void> {
+  const config = vscode.workspace.getConfiguration('stock-bar');
+  await config.update('holdings', holdings, vscode.ConfigurationTarget.Global);
+}
+
+async function removeCodes(codesToRemove: readonly string[]): Promise<void> {
+  const config = vscode.workspace.getConfiguration('stock-bar');
+  const codes = config.get<string[]>('codes', []);
+  const removing = new Set(codesToRemove.map(normalizeConfiguredCode));
+  await updateCodes(
+    codes.filter(code => !removing.has(normalizeConfiguredCode(code))),
+  );
+
+  const configured = config.get<string[] | null>('statusBarCodes', null);
+  if (configured !== null) {
+    await updateStatusBarCodes(
+      configured.filter(code => !removing.has(normalizeConfiguredCode(code))),
+    );
+  }
+
+  const holdings = config.get<Record<string, number>>('holdings', {});
+  const nextHoldings = Object.fromEntries(
+    Object.entries(holdings).filter(([code]) => !removing.has(normalizeConfiguredCode(code))),
+  );
+  if (Object.keys(nextHoldings).length !== Object.keys(holdings).length) {
+    await updateHoldings(nextHoldings);
+  }
+}
+
+async function toggleStatusBar(code: string): Promise<void> {
+  const config = readConfig();
+  const current = getEffectiveStatusBarCodes(config);
+  const isPinned = current.includes(code);
+  const next = isPinned
+    ? current.filter(itemCode => itemCode !== code)
+    : [...current, code];
+  await updateStatusBarCodes(next);
+  const name = latestDataByCode.get(code)?.name || code;
+  vscode.window.showInformationMessage(
+    isPinned
+      ? `已从状态栏移除「${name}」`
+      : `已将「${name}」固定到状态栏`,
+  );
+}
+
+async function removeTickerFromSidebar(code: string): Promise<void> {
+  const name = latestDataByCode.get(code)?.name || code;
+  const confirmed = await vscode.window.showWarningMessage(
+    `确定从自选列表移除「${name}（${code}）」吗？`,
+    { modal: true },
+    '移除',
+  );
+  if (confirmed !== '移除') return;
+  await removeCodes([code]);
+  vscode.window.showInformationMessage(`已从自选列表移除「${name}」`);
+}
+
+async function moveTickerRelative(
+  code: string,
+  targetCode: string,
+  position: 'before' | 'after',
+): Promise<void> {
+  if (code === targetCode) return;
+  const category = classifyMarket(code);
+  if (classifyMarket(targetCode) !== category) return;
+
+  const config = readConfig();
+  const siblings = config.stockCodes.filter(code => classifyMarket(code) === category);
+  if (!siblings.includes(code) || !siblings.includes(targetCode)) return;
+
+  const reordered = siblings.filter(itemCode => itemCode !== code);
+  let targetIndex = reordered.indexOf(targetCode);
+  if (targetIndex < 0) return;
+  if (position === 'after') targetIndex += 1;
+  reordered.splice(targetIndex, 0, code);
+
+  let siblingIndex = 0;
+  const next = config.stockCodes.map(itemCode => (
+    classifyMarket(itemCode) === category
+      ? reordered[siblingIndex++]
+      : itemCode
+  ));
+  await updateCodes(next);
+  renderLatestData();
+}
+
+async function managePrecision(selectedCode?: string): Promise<void> {
+  let code = selectedCode;
+  if (!code) {
+    const config = readConfig();
+    const items: CodeQuickPickItem[] = getSidebarOrderedCodes(config).map(itemCode => {
+      const data = latestDataByCode.get(itemCode);
+      const name = data?.name || itemCode;
+      return {
+        label: name,
+        description: name === itemCode ? undefined : itemCode,
+        code: itemCode,
+      };
+    });
+    const selected = await vscode.window.showQuickPick(items, {
+      matchOnDescription: true,
+      placeHolder: '选择要设置小数位数的标的',
+    });
+    if (!selected) return;
+    code = selected.code;
+  }
+
+  const workspaceConfig = vscode.workspace.getConfiguration('stock-bar');
+  const precision = workspaceConfig.get<Record<string, number>>('precision', {});
+  const current = precision[code];
+  const defaultPrecision = precision['default'];
+  const options = [
+    {
+      label: defaultPrecision === undefined
+        ? '自动'
+        : `使用全局默认（${defaultPrecision} 位）`,
+      description: current === undefined ? '当前' : '清除该标的的单独设置',
+      value: undefined,
+    },
+    ...Array.from({ length: 9 }, (_, digits) => ({
+      label: `${digits} 位小数`,
+      description: current === digits ? '当前' : undefined,
+      value: digits,
+    })),
+  ];
+  const selectedPrecision = await vscode.window.showQuickPick(options, {
+    placeHolder: `设置 ${latestDataByCode.get(code)?.name || code} 的价格精度`,
+  });
+  if (!selectedPrecision) return;
+
+  const nextPrecision = { ...precision };
+  if (selectedPrecision.value === undefined) {
+    delete nextPrecision[code];
+  } else {
+    nextPrecision[code] = selectedPrecision.value;
+  }
+  await workspaceConfig.update(
+    'precision',
+    nextPrecision,
+    vscode.ConfigurationTarget.Global,
+  );
+  vscode.window.showInformationMessage(
+    selectedPrecision.value === undefined
+      ? `「${code}」已恢复默认小数位数`
+      : `「${code}」已设置为 ${selectedPrecision.value} 位小数`,
+  );
+}
+
+function renderLatestData(): void {
+  const config = readConfig();
+  const allData = config.stockCodes.flatMap(code => {
+    const data = latestDataByCode.get(code);
+    return data ? [data] : [];
+  });
+  const statusBarData = getEffectiveStatusBarCodes(config).flatMap(code => {
+    const data = latestDataByCode.get(code);
+    return data ? [data] : [];
+  });
+  const dailyPnl = calculateDailyPnl(latestDataByCode, config.holdings);
+  statusBarManager.update(statusBarData, config.format, dailyPnl);
+  sidebarManager.update(allData, config);
+  holdingsManager.update(config, latestDataByCode);
 }
 
 /**
@@ -103,7 +341,8 @@ function applyConfig(context: vscode.ExtensionContext): void {
   const config = readConfig();
 
   statusBarManager.setColors(config.riseColor, config.fallColor, config.flatColor);
-  statusBarManager.setMaxItems(config.maxItems);
+  // refreshAll 已按显示配置筛选，管理器本身不再二次截断自定义列表。
+  statusBarManager.setMaxItems(Number.MAX_SAFE_INTEGER);
   statusBarManager.setPrecision(config.precision, config.defaultPrecision);
   statusBarManager.setScale(config.priceScale);
 
@@ -111,14 +350,24 @@ function applyConfig(context: vscode.ExtensionContext): void {
   restartPolling(config.interval);
 
   // 监听配置变更
-  onConfigChanged(newConfig => {
+  onConfigChanged((newConfig, event) => {
     console.log('[StockBar] 配置已变更，重新应用');
+    syncStateManager.handleConfigurationChange();
     statusBarManager.setColors(newConfig.riseColor, newConfig.fallColor, newConfig.flatColor);
-    statusBarManager.setMaxItems(newConfig.maxItems);
+    statusBarManager.setMaxItems(Number.MAX_SAFE_INTEGER);
     statusBarManager.setPrecision(newConfig.precision, newConfig.defaultPrecision);
     statusBarManager.setScale(newConfig.priceScale);
-    restartPolling(newConfig.interval);
-    refreshAll();
+    if (event.affectsConfiguration('stock-bar.interval')) {
+      restartPolling(newConfig.interval);
+    }
+    if (
+      event.affectsConfiguration('stock-bar.codes') ||
+      event.affectsConfiguration('stock-bar.premiumCodes')
+    ) {
+      void refreshAll();
+    } else {
+      renderLatestData();
+    }
   }, context);
 }
 
@@ -126,7 +375,10 @@ function applyConfig(context: vscode.ExtensionContext): void {
  * 刷新所有行情数据
  */
 async function refreshAll(): Promise<void> {
-  if (isRefreshing) return;
+  if (isRefreshing) {
+    refreshPending = true;
+    return;
+  }
   isRefreshing = true;
 
   try {
@@ -163,18 +415,18 @@ async function refreshAll(): Promise<void> {
       console.warn(`[StockBar] 以下品种获取失败: ${missingStocks.join(', ')}`);
     }
 
-    // 更新状态栏
-    statusBarManager.update(allData, config.format);
-
-    // 更新状态栏图标提示（第一个项显示最后更新时间）
-    const lastItem = statusBarManager.getAllItems()[0];
-    if (lastItem) {
-      // 无需额外操作，tooltip 已包含时间
-    }
+    latestDataByCode = new Map(allData.map(data => [data.code, data]));
+    // 状态栏使用独立选择，侧边栏始终显示全部自选。
+    renderLatestData();
   } catch (err) {
     console.error('[StockBar] 刷新失败:', err);
+    sidebarManager.showRefreshError(err);
   } finally {
     isRefreshing = false;
+    if (refreshPending) {
+      refreshPending = false;
+      void refreshAll();
+    }
   }
 }
 
@@ -185,7 +437,7 @@ function startPolling(intervalSeconds: number): void {
   if (pollingTimer) return;
   const ms = intervalSeconds * 1000;
   console.log(`[StockBar] 启动轮询，间隔 ${intervalSeconds}s`);
-  pollingTimer = setInterval(refreshAll, ms);
+  pollingTimer = setInterval(() => void refreshAll(), ms);
 }
 
 /**
