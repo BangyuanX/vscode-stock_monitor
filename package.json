@@ -2,7 +2,7 @@
   "name": "stock-bar-monitor",
   "displayName": "Stock Bar Monitor",
   "description": "轻量级股票/加密货币状态栏监控",
-  "version": "0.1.0",
+  "version": "0.7.1",
   "publisher": "bangyuan",
   "license": "MIT",
   "engines": {
@@ -19,26 +19,99 @@
     "commands": [
       {
         "command": "stock-bar.refresh",
-        "title": "Stock Bar: 立即刷新行情"
+        "title": "Stock Bar: 立即刷新行情",
+        "icon": "$(refresh)"
       },
       {
         "command": "stock-bar.openSettings",
-        "title": "Stock Bar: 打开设置"
+        "title": "Stock Bar: 打开设置",
+        "icon": "$(settings-gear)"
       },
       {
         "command": "stock-bar.addCode",
-        "title": "Stock Bar: 添加监控品种"
+        "title": "Stock Bar: 添加监控品种",
+        "icon": "$(add)"
       },
       {
         "command": "stock-bar.removeCode",
         "title": "Stock Bar: 移除监控品种"
+      },
+      {
+        "command": "stock-bar.managePrecision",
+        "title": "Stock Bar: 设置标的小数位数",
+        "icon": "$(symbol-numeric)"
+      },
+      {
+        "command": "stock-bar.syncNow",
+        "title": "Stock Bar: 立即同步配置",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "stock-bar.manageHoldings",
+        "title": "Stock Bar: 管理 A 股持仓",
+        "icon": "$(briefcase)"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "stock-bar-explorer",
+          "title": "Stock Bar",
+          "icon": "resources/stock-bar.svg"
+        }
+      ]
+    },
+    "views": {
+      "stock-bar-explorer": [
+        {
+          "id": "stock-bar.watchlist",
+          "name": "自选行情",
+          "contextualTitle": "Stock Bar 自选行情",
+          "type": "webview",
+          "icon": "resources/stock-bar.svg"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "stock-bar.refresh",
+          "when": "view == stock-bar.watchlist",
+          "group": "navigation@1"
+        },
+        {
+          "command": "stock-bar.addCode",
+          "when": "view == stock-bar.watchlist",
+          "group": "navigation@2"
+        },
+        {
+          "command": "stock-bar.openSettings",
+          "when": "view == stock-bar.watchlist",
+          "group": "navigation@3"
+        },
+        {
+          "command": "stock-bar.manageHoldings",
+          "when": "view == stock-bar.watchlist",
+          "group": "navigation@4"
+        },
+        {
+          "command": "stock-bar.managePrecision",
+          "when": "view == stock-bar.watchlist",
+          "group": "2_configure@1"
+        },
+        {
+          "command": "stock-bar.syncNow",
+          "when": "view == stock-bar.watchlist",
+          "group": "2_configure@2"
+        }
+      ]
+    },
     "configuration": {
       "title": "Stock Bar Monitor",
       "properties": {
         "stock-bar.codes": {
           "type": "array",
+          "ignoreSync": true,
           "items": {
             "type": "string"
           },
@@ -48,54 +121,93 @@
           ],
           "description": "监控的品种代码列表。A股：sh/sz/bj前缀（如 sh000001）；港股：hk前缀（如 hk00700）；美股：usr_前缀（如 usr_nvda）；加密货币：BTC/USDT 格式（如 BTC/USDT）；美股代币：NVDA/USDT；外汇：fx_前缀（如 fx_sjpycnh）"
         },
+        "stock-bar.statusBarCodes": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "ignoreSync": true,
+          "items": {
+            "type": "string"
+          },
+          "default": null,
+          "description": "状态栏显示的品种代码。null 表示沿用侧边栏顺序中的前 maxItems 个；数组表示显式选择，最终顺序始终跟随侧边栏。"
+        },
         "stock-bar.interval": {
           "type": "number",
+          "ignoreSync": true,
           "default": 5,
           "minimum": 3,
           "description": "行情刷新间隔（秒）"
         },
         "stock-bar.format": {
           "type": "string",
+          "ignoreSync": true,
           "default": "${name} ${price}",
-          "description": "状态栏显示模板。支持占位符：${icon} ${name} ${price} ${change} ${percent} ${code} ${session}"
+          "description": "状态栏显示模板。支持占位符：${icon} ${name} ${price} ${change} ${percent} ${code} ${session} ${premium}"
         },
         "stock-bar.precision": {
           "type": "object",
+          "ignoreSync": true,
           "default": {},
-          "description": "每个品种的小数点位数的覆盖设置。key为品种代码，value为小数位数。用 \"default\" 设置全局默认值。示例：{\"sh000001\": 2, \"BTC/USDT\": 0, \"fx_sjpycnh\": 4, \"default\": 2}",
+          "description": "每个品种的小数点位数覆盖。可点击侧边栏价格进行设置；用 \"default\" 设置全局默认值。示例：{\"sh000001\": 2, \"BTC/USDT\": 0, \"fx_sjpycnh\": 4, \"default\": 2}",
           "additionalProperties": {
             "type": "number"
           }
         },
         "stock-bar.maxItems": {
           "type": "number",
+          "ignoreSync": true,
           "default": 6,
           "minimum": 1,
           "maximum": 20,
-          "description": "状态栏最多同时显示的品种数量"
+          "description": "未自定义 statusBarCodes 时，状态栏最多同时显示的品种数量"
         },
         "stock-bar.riseColor": {
           "type": "string",
+          "ignoreSync": true,
           "default": "#cc5555",
           "description": "上涨时的文字颜色（CSS颜色值），中国习惯红色上涨"
         },
         "stock-bar.fallColor": {
           "type": "string",
+          "ignoreSync": true,
           "default": "#4a9e4a",
           "description": "下跌时的文字颜色（CSS颜色值），中国习惯绿色下跌"
         },
         "stock-bar.flatColor": {
           "type": "string",
+          "ignoreSync": true,
           "default": "",
           "description": "平盘时的文字颜色（留空使用默认颜色）"
         },
         "stock-bar.premiumCodes": {
           "type": "array",
+          "ignoreSync": true,
           "items": {
             "type": "string"
           },
           "default": [],
           "description": "需要显示 ETF 溢价率的品种代码（如 sz159501）。溢价率 = (市价 - IOPV) ÷ IOPV × 100%，需在 format 中添加 ${premium} 占位符"
+        },
+        "stock-bar.scale": {
+          "type": "object",
+          "ignoreSync": true,
+          "default": {},
+          "description": "每个品种的显示乘数。key 为品种代码，value 为乘数，例如 {\"fx_sjpycnh\": 100}",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "stock-bar.holdings": {
+          "type": "object",
+          "ignoreSync": true,
+          "default": {},
+          "description": "A 股持仓股数，由“Stock Bar: 管理 A 股持仓”界面维护，用于计算今日盈亏。",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0
+          }
         }
       }
     }

@@ -1,10 +1,31 @@
 import * as vscode from 'vscode';
 import { AppConfig, FormatField, extractFormatFields } from './types';
+import { orderCodesByMarket } from './market';
 
 const CONFIG_NS = 'stock-bar';
 
-/** 股票代码前缀列表 */
-const STOCK_PREFIXES = ['sh', 'sz', 'bj', 'hk', 'usr_', 'nf_', 'hf_'];
+/** 将旧版 crypto: 前缀归一化为当前代码格式 */
+export function normalizeConfiguredCode(code: string): string {
+  const trimmed = code.trim();
+  const withoutLegacyPrefix = trimmed.startsWith('crypto:')
+    ? trimmed.substring(7)
+    : trimmed;
+  const hkMatch = withoutLegacyPrefix.match(/^hk(\d{1,5})$/i);
+  if (hkMatch) return `hk${hkMatch[1].padStart(5, '0')}`;
+  return withoutLegacyPrefix;
+}
+
+function normalizeCodeList(codes: readonly string[]): string[] {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const code of codes) {
+    const value = normalizeConfiguredCode(code);
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    normalized.push(value);
+  }
+  return normalized;
+}
 
 /**
  * 从配置中读取应用配置
@@ -23,28 +44,28 @@ export function readConfig(): AppConfig {
   const defaultPrecisionVal = precision['default'] ?? -1;
   const premiumCodes = config.get<string[]>('premiumCodes', []);
   const priceScale = config.get<Record<string, number>>('scale', {});
+  const rawHoldings = config.get<Record<string, number>>('holdings', {}) || {};
 
   // 所有代码统一走 stockCodes
   // 推荐格式：usr_NVDA（新浪美股）、BTC/USDT（Binance 加密货币/美股代币）
-  const stockCodes: string[] = [];
+  const stockCodes = normalizeCodeList(allCodes);
   const cryptoSymbols: string[] = [];
-
-  for (const code of allCodes) {
-    const trimmed = code.trim();
-    if (!trimmed) continue;
-
-    if (trimmed.startsWith('crypto:')) {
-      // 兼容旧配置：crypto:BTCUSDT → 去掉前缀, 后续由 toBinanceSymbol 统一处理
-      stockCodes.push(trimmed.substring(7));
-    } else {
-      stockCodes.push(trimmed);
-    }
-  }
+  const availableCodes = new Set(stockCodes);
+  const rawStatusBarCodes = config.get<string[] | null>('statusBarCodes', null);
+  const statusBarCodes = rawStatusBarCodes === null
+    ? null
+    : normalizeCodeList(rawStatusBarCodes).filter(code => availableCodes.has(code));
 
   const formatFields = extractFormatFields(format);
+  const holdings = Object.fromEntries(
+    Object.entries(rawHoldings)
+      .map(([code, quantity]) => [normalizeConfiguredCode(code), Number(quantity)] as const)
+      .filter(([code, quantity]) => code && Number.isFinite(quantity) && quantity > 0),
+  );
 
   return {
     stockCodes,
+    statusBarCodes,
     cryptoSymbols,
     interval: Math.max(3, interval),
     format,
@@ -57,27 +78,34 @@ export function readConfig(): AppConfig {
     defaultPrecision: defaultPrecisionVal,
     premiumCodes,
     priceScale,
+    holdings,
   };
 }
 
-/**
- * 判断是否为合法的股票代码格式
- */
-function isStockCode(code: string): boolean {
-  return STOCK_PREFIXES.some(prefix => code.startsWith(prefix));
+/** 按侧边栏固定市场分组和组内手动顺序展开全部代码 */
+export function getSidebarOrderedCodes(config: AppConfig): string[] {
+  return orderCodesByMarket(config.stockCodes);
+}
+
+/** 状态栏实际显示的代码；未自定义时保持原有 maxItems 行为 */
+export function getEffectiveStatusBarCodes(config: AppConfig): string[] {
+  const sidebarOrder = getSidebarOrderedCodes(config);
+  if (config.statusBarCodes === null) return sidebarOrder.slice(0, config.maxItems);
+  const selected = new Set(config.statusBarCodes);
+  return sidebarOrder.filter(code => selected.has(code));
 }
 
 /**
  * 监听配置变更，筛选出本扩展相关的变更
  */
 export function onConfigChanged(
-  listener: (config: AppConfig) => void,
+  listener: (config: AppConfig, event: vscode.ConfigurationChangeEvent) => void,
   context: vscode.ExtensionContext,
 ): void {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration(CONFIG_NS)) {
-        listener(readConfig());
+        listener(readConfig(), e);
       }
     }),
   );
