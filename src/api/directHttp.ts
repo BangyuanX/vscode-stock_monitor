@@ -354,48 +354,42 @@ function sendGetRequest(
  *
  * 预解析模式用于绕过部分网络环境对 hostname 层面 TCP 连接的干扰。
  */
-async function directConnect(
+function connectToTarget(
   hostname: string,
+  connectTarget: string,
   port: number,
   useTls: boolean,
   timeoutMs: number,
-  resolveDns?: boolean,
 ): Promise<net.Socket | tls.TLSSocket> {
-  // 可选：预解析 DNS 到 IP，避免 hostname 层面连接被干扰
-  let connectTarget = hostname;
-  if (resolveDns) {
-    try {
-      const addresses = await dns.promises.resolve4(hostname);
-      if (addresses && addresses.length > 0) {
-        connectTarget = addresses[0];
-      }
-    } catch {
-      // DNS 预解析失败，回退到 hostname 连接
-    }
-  }
-
   return new Promise((resolve, reject) => {
     const netSocket = new net.Socket();
-    let cleaned = false;
+    let settled = false;
 
-    // 连接超时保护：timeoutMs 内未建立连接则拒绝
     const connTimer = setTimeout(() => {
-      if (cleaned) return;
-      cleaned = true;
-      netSocket.destroy();
-      reject(new Error(`连接超时 (${timeoutMs}ms): ${hostname}:${port}`));
+      fail(new Error(`连接超时 (${timeoutMs}ms): ${hostname}:${port} via ${connectTarget}`));
     }, timeoutMs);
 
-    function cleanup(): void {
-      if (cleaned) return;
-      cleaned = true;
+    function fail(error: Error): void {
+      if (settled) return;
+      settled = true;
       clearTimeout(connTimer);
       netSocket.destroy();
+      reject(error);
+    }
+
+    function succeed(socket: net.Socket | tls.TLSSocket): void {
+      if (settled) {
+        socket.destroy();
+        return;
+      }
+      settled = true;
+      clearTimeout(connTimer);
+      resolve(socket);
     }
 
     if (!useTls) {
       netSocket.connect(port, connectTarget, () => {
-        resolve(netSocket);
+        succeed(netSocket);
       });
     } else {
       netSocket.connect(port, connectTarget, () => {
@@ -406,20 +400,56 @@ async function directConnect(
             servername: hostname,
             rejectUnauthorized: false, // VS Code Electron 环境证书可能受限，公开数据无需验证
           },
-          () => resolve(tlsSocket),
+          () => succeed(tlsSocket),
         );
         tlsSocket.once('error', (e) => {
-          cleanup();
-          reject(new Error(`TLS/SSL 连接失败: ${e.message}`));
+          fail(new Error(`TLS/SSL 连接失败 (${connectTarget}): ${e.message}`));
         });
       });
     }
 
     netSocket.once('error', (e) => {
-      cleanup();
-      reject(new Error(`网络连接失败: ${e.message}`));
+      fail(new Error(`网络连接失败 (${connectTarget}): ${e.message}`));
     });
   });
+}
+
+async function directConnect(
+  hostname: string,
+  port: number,
+  useTls: boolean,
+  timeoutMs: number,
+  resolveDns?: boolean,
+): Promise<net.Socket | tls.TLSSocket> {
+  let connectTargets = [hostname];
+
+  if (resolveDns) {
+    try {
+      const addresses = await dns.promises.resolve4(hostname);
+      if (addresses.length > 0) {
+        connectTargets = Array.from(new Set(addresses));
+      }
+    } catch {
+      // DNS 预解析失败，回退到 hostname 连接
+    }
+  }
+
+  // DNS/CDN 通常返回多个 IP。VS Code Extension Host 偶尔会卡在其中一个
+  // 不可达地址上，因此在总超时预算内逐个尝试，而不是固定使用第一个地址。
+  const attemptTimeout = connectTargets.length > 1
+    ? Math.max(2_000, Math.ceil(timeoutMs / connectTargets.length))
+    : timeoutMs;
+  let lastError: Error | undefined;
+
+  for (const connectTarget of connectTargets) {
+    try {
+      return await connectToTarget(hostname, connectTarget, port, useTls, attemptTimeout);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw lastError ?? new Error(`无法连接: ${hostname}:${port}`);
 }
 
 // ============================================================

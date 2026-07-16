@@ -442,6 +442,7 @@ async function fetchBinanceDailyKlines(symbols: string[]): Promise<Map<string, B
         {
           useTls: true,
           timeoutMs: 10000,
+          resolveDns: true,
           headers: { 'Accept': 'application/json' },
         },
       );
@@ -480,6 +481,7 @@ async function fetchBinanceTickerBatch(symbols: string[]): Promise<BinanceTicker
       {
         useTls: true,
         timeoutMs: 10000,
+        resolveDns: true,
         headers: { 'Accept': 'application/json' },
       },
     );
