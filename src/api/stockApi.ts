@@ -7,6 +7,7 @@ const SINA_BATCH_CONCURRENCY = 2;
 const BINANCE_BATCH_SIZE = 20;
 const BINANCE_KLINE_CONCURRENCY = 5;
 const BINANCE_KLINE_CACHE_MS = 60_000;
+const BINANCE_TICKER_STALE_MS = 10 * 60_000;
 
 function chunkArray<T>(items: readonly T[], size: number): T[][] {
   const chunks: T[][] = [];
@@ -405,12 +406,31 @@ interface BinanceTicker {
   highPrice: string;
   lowPrice: string;
   volume: string;
+  closeTime?: number;
 }
 
 const binanceKlineCache = new Map<string, {
   data: BinanceDailyKline;
   expiresAt: number;
 }>();
+
+const binanceTickerCache = new Map<string, {
+  data: StockData;
+  cachedAt: number;
+}>();
+
+function formatCstDateTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).replace(/\//g, '-');
+}
 
 /**
  * 从 Binance 获取日K线开盘价（东八区 8:00 / UTC 00:00 基准）
@@ -550,7 +570,7 @@ async function fetchFromBinance(symbols: string[]): Promise<Map<string, StockDat
         low = parseFloat(ticker.lowPrice) || price;
       }
 
-      result.set(sym, {
+      const data: StockData = {
         code: sym,
         name: extractBaseCurrency(sym),
         price,
@@ -560,9 +580,28 @@ async function fetchFromBinance(symbols: string[]): Promise<Map<string, StockDat
         low,
         open: openPrice,
         yestclose: yestclose > 0 ? yestclose : price,
-        time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+        time: formatCstDateTime(
+          typeof ticker.closeTime === 'number' && Number.isFinite(ticker.closeTime)
+            ? ticker.closeTime
+            : Date.now(),
+        ),
         marketState: 'REGULAR',
-      });
+      };
+      result.set(sym, data);
+      binanceTickerCache.set(sym, { data, cachedAt: Date.now() });
+    }
+
+    // Binance/网络短暂抖动时保留最近一次成功行情，避免所有币种同时闪成错误占位。
+    const now = Date.now();
+    for (const sym of binancePairs) {
+      if (result.has(sym)) continue;
+      const cached = binanceTickerCache.get(sym);
+      if (!cached) continue;
+      if (now - cached.cachedAt > BINANCE_TICKER_STALE_MS) {
+        binanceTickerCache.delete(sym);
+        continue;
+      }
+      result.set(sym, { ...cached.data, stale: true });
     }
   } catch (err) {
     console.error(`[StockBar] Binance 行情请求失败:`, err);

@@ -648,6 +648,9 @@ export async function smartGetText(
   options?: HttpOptions & { encoding?: string },
 ): Promise<{ statusCode: number; text: string }> {
   const resp = await smartGetInternal(hostname, path, options);
+  if (resp.statusCode < 200 || resp.statusCode >= 300) {
+    throw new Error(`HTTP ${resp.statusCode}: ${resp.body.toString('utf8').trim().substring(0, 100)}`);
+  }
   const encoding = options?.encoding ?? 'utf-8';
   const text =
     encoding === 'utf-8'
@@ -666,6 +669,10 @@ export async function smartGetJson<T = any>(
 ): Promise<{ statusCode: number; data: T }> {
   const resp = await smartGetInternal(hostname, path, options);
   const text = resp.body.toString('utf8').trim();
+
+  if (resp.statusCode < 200 || resp.statusCode >= 300) {
+    throw new Error(`HTTP ${resp.statusCode}: ${text.substring(0, 100)}`);
+  }
 
   if (!text.startsWith('{') && !text.startsWith('[')) {
     throw new Error(`非JSON响应 (HTTP ${resp.statusCode}): ${text.substring(0, 100)}`);

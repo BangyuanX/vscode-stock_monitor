@@ -140,7 +140,8 @@ export class StatusBarManager {
       const precision = prec >= 0 ? prec : undefined;
       const scale = this.priceScale[data.code] || 1;
       const display = formatTicker(data, precision, scale);
-      const text = applyFormat(template, display);
+      const formattedText = applyFormat(template, display);
+      const text = data.stale ? `$(warning) ${formattedText}` : formattedText;
       const tooltip = buildTooltip(data, precision, scale);
       const color = this.getColor(data.changePercent);
 

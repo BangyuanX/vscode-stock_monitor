@@ -20,6 +20,8 @@ export interface StockData {
   iopv?: number;
   /** 数据源明确提供的是延迟行情 */
   delayed?: boolean;
+  /** 本轮刷新失败，当前显示最近一次成功获取的缓存行情 */
+  stale?: boolean;
 }
 
 /** 格式化后的展示数据 */
@@ -184,6 +186,10 @@ export function buildTooltip(data: StockData, precision?: number, scale?: number
 
   if (data.delayed) {
     lines.push('🟡 D 延迟行情（通常至少延迟约 15 分钟）');
+  }
+
+  if (data.stale) {
+    lines.push('⚠️ 行情暂时无法刷新，当前显示最近一次成功数据');
   }
 
   if (data.marketState && data.marketState !== 'REGULAR') {
