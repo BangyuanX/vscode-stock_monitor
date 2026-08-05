@@ -22,6 +22,8 @@ export interface StockData {
   delayed?: boolean;
   /** 本轮刷新失败，当前显示最近一次成功获取的缓存行情 */
   stale?: boolean;
+  /** 数据源尚无有效最新价（如未开市或停牌），当前价暂按昨收显示 */
+  usingPreviousClose?: boolean;
 }
 
 /** 格式化后的展示数据 */
@@ -190,6 +192,10 @@ export function buildTooltip(data: StockData, precision?: number, scale?: number
 
   if (data.stale) {
     lines.push('⚠️ 行情暂时无法刷新，当前显示最近一次成功数据');
+  }
+
+  if (data.usingPreviousClose) {
+    lines.push('⏸ 暂无有效最新价（可能尚未开市或停牌），当前按昨收显示');
   }
 
   if (data.marketState && data.marketState !== 'REGULAR') {

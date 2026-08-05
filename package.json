@@ -216,6 +216,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --platform=node --format=cjs --sourcemap",
     "watch": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --platform=node --format=cjs --sourcemap --watch",
+    "test": "esbuild src/api/stockApi.test.ts --bundle --outfile=out/stockApi.test.js --platform=node --format=cjs && node --test out/stockApi.test.js",
     "typecheck": "tsc --noEmit -p ./",
     "lint": "eslint src --ext ts"
   },
