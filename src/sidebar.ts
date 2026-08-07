@@ -41,9 +41,13 @@ export interface SidebarActions {
 export class SidebarManager implements vscode.WebviewViewProvider, vscode.Disposable {
   private readonly registration: vscode.Disposable;
   private view?: vscode.WebviewView;
+  private webviewReady = false;
   private payload: SidebarPayload = { state: 'loading', groups: [] };
 
-  constructor(private readonly actions: SidebarActions) {
+  constructor(
+    private readonly extensionUri: vscode.Uri,
+    private readonly actions: SidebarActions,
+  ) {
     this.registration = vscode.window.registerWebviewViewProvider(
       'stock-bar.watchlist',
       this,
@@ -53,11 +57,13 @@ export class SidebarManager implements vscode.WebviewViewProvider, vscode.Dispos
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
+    this.webviewReady = false;
     webviewView.webview.options = { enableScripts: true };
-    webviewView.webview.html = getWebviewHtml(webviewView.webview);
+    this.setWebviewHtml(webviewView);
     webviewView.webview.onDidReceiveMessage(async message => {
       switch (message?.type) {
         case 'ready':
+          this.webviewReady = true;
           await this.render();
           break;
         case 'togglePin':
@@ -91,7 +97,10 @@ export class SidebarManager implements vscode.WebviewViewProvider, vscode.Dispos
       }
     });
     webviewView.onDidDispose(() => {
-      if (this.view === webviewView) this.view = undefined;
+      if (this.view === webviewView) {
+        this.view = undefined;
+        this.webviewReady = false;
+      }
     });
   }
 
@@ -156,7 +165,27 @@ export class SidebarManager implements vscode.WebviewViewProvider, vscode.Dispos
   }
 
   private async render(): Promise<void> {
-    await this.view?.webview.postMessage({ type: 'render', payload: this.payload });
+    if (!this.view) return;
+    if (!this.webviewReady) {
+      this.setWebviewHtml(this.view);
+      return;
+    }
+    const delivered = await this.view.webview.postMessage({
+      type: 'render',
+      payload: this.payload,
+    });
+    if (!delivered && this.view) {
+      this.webviewReady = false;
+      this.setWebviewHtml(this.view);
+    }
+  }
+
+  private setWebviewHtml(view: vscode.WebviewView): void {
+    view.webview.html = getWebviewHtml(
+      view.webview,
+      this.extensionUri,
+      this.payload,
+    );
   }
 
   dispose(): void {
@@ -173,14 +202,21 @@ function getNonce(): string {
   return value;
 }
 
-export function getWebviewHtml(webview: vscode.Webview): string {
+export function getWebviewHtml(
+  webview: vscode.Webview,
+  extensionUri: vscode.Uri,
+  payload: SidebarPayload = { state: 'loading', groups: [] },
+): string {
   const nonce = getNonce();
+  const scriptUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(extensionUri, 'resources', 'sidebar.js'),
+  );
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'nonce-${nonce}';">
   <style>
     :root { color-scheme: light dark; }
     * { box-sizing: border-box; }
@@ -380,9 +416,9 @@ export function getWebviewHtml(webview: vscode.Webview): string {
   </style>
 </head>
 <body>
-  <main id="app"><div class="state">正在获取行情数据…</div></main>
+  <main id="app">${renderPayloadHtml(payload)}</main>
   <div id="stock-tooltip" class="stock-tooltip" role="tooltip" hidden></div>
-  <script nonce="${nonce}">
+  <script type="application/json" id="legacy-sidebar-script">
     const vscode = acquireVsCodeApi();
     const app = document.getElementById('app');
     const stockTooltip = document.getElementById('stock-tooltip');
@@ -616,6 +652,59 @@ export function getWebviewHtml(webview: vscode.Webview): string {
     });
     vscode.postMessage({ type: 'ready' });
   </script>
+  <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
+}
+
+const pinOffSvg = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round" d="M5.1 1.8h5.8l-.9 4 2.2 2.1v1H8.7v4.5L8 14.5l-.7-1.1V8.9H3.8v-1L6 5.8l-.9-4z"/><path d="M2.3 2.3l11.4 11.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+const pinOnSvg = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M5 1.5h6l-1 4.2 2.4 2.2v1.3H8.8v4.2L8 14.7l-.8-1.3V9.2H3.6V7.9L6 5.7 5 1.5z"/></svg>';
+const deleteSvg = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+const dragSvg = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M5 3h2v2H5V3zm4 0h2v2H9V3zM5 7h2v2H5V7zm4 0h2v2H9V7zm-4 4h2v2H5v-2zm4 0h2v2H9v-2z"/></svg>';
+const chevronSvg = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.25 4.25L6 8l3.75-3.75" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function escapeHtml(value: unknown): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function trendSymbol(trend: SidebarTicker['trend']): string {
+  if (trend === 'rise') return '↑';
+  if (trend === 'fall') return '↓';
+  if (trend === 'error') return '!';
+  return '−';
+}
+
+function renderPayloadHtml(payload: SidebarPayload): string {
+  if (payload.state === 'loading') {
+    return '<div class="state">正在获取行情数据…</div>';
+  }
+  if (payload.state === 'error' && payload.groups.length === 0) {
+    return `<div class="notice">${escapeHtml(payload.message || '行情刷新失败')}</div>`;
+  }
+  let html = payload.message
+    ? `<div class="notice">${escapeHtml(payload.message)}</div>`
+    : '';
+  if (payload.groups.length === 0) {
+    return `${html}<div class="state">还没有监控标的，请点击顶部 + 添加。</div>`;
+  }
+  for (const group of payload.groups) {
+    html += `<section class="group"><button class="group-header" data-category="${escapeHtml(group.category)}"><span class="chevron">${chevronSvg}</span><span class="group-label">${escapeHtml(group.label)}</span></button><div class="group-items">`;
+    for (const item of group.items) {
+      const code = escapeHtml(item.code);
+      html += `<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="${code}" data-category="${escapeHtml(group.category)}" data-tooltip="${escapeHtml(item.tooltip)}">`;
+      html += `<span class="trend ${item.trend}">${trendSymbol(item.trend)}</span>`;
+      html += `<span class="name"><span class="name-text">${escapeHtml(item.name)}</span>${item.delayed ? '<span class="delay-badge" title="延迟行情（通常至少延迟约 15 分钟）">D</span>' : ''}</span>`;
+      html += `<button class="price" data-code="${code}" title="设置小数位数"><span class="current-price">${escapeHtml(item.price)}</span><span class="percent ${item.trend}">${item.percent ? `(${escapeHtml(item.percent)})` : ''}</span></button>`;
+      html += `<button class="icon-button pin-button${item.pinned ? ' pinned' : ''}" data-code="${code}" title="${item.pinned ? '状态栏：已显示（点击移除）' : '状态栏：未显示（点击固定）'}" aria-label="切换状态栏显示" aria-pressed="${item.pinned}">${item.pinned ? pinOnSvg : pinOffSvg}</button>`;
+      html += `<span class="drag-handle" draggable="true" data-code="${code}" data-category="${escapeHtml(group.category)}" title="按住并拖动排序" role="button" aria-label="拖动排序">${dragSvg}</span>`;
+      html += `<button class="delete-button" data-code="${code}" title="从自选移除" aria-label="从自选移除">${deleteSvg}</button></div>`;
+    }
+    html += '</div></section>';
+  }
+  return html;
 }

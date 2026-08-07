@@ -2,7 +2,7 @@
   "name": "stock-bar-monitor",
   "displayName": "Stock Bar Monitor",
   "description": "轻量级股票/加密货币状态栏监控",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "publisher": "bangyuan",
   "license": "MIT",
   "engines": {

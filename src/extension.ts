@@ -32,7 +32,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // 先注册并启动行情 UI；配置同步在后台初始化，不能阻塞侧边栏。
   statusBarManager = new StatusBarManager();
-  sidebarManager = new SidebarManager({
+  sidebarManager = new SidebarManager(context.extensionUri, {
     toggleStatusBar,
     removeTicker: removeTickerFromSidebar,
     moveTicker: moveTickerRelative,
