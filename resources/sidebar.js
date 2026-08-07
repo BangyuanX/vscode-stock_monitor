@@ -185,9 +185,90 @@ function bindInteractions() {
   });
 }
 
+function updateExistingRows(payload) {
+  if (payload.state !== 'ready' || payload.message) return false;
+
+  const sections = Array.from(app.querySelectorAll(':scope > .group'));
+  if (sections.length !== payload.groups.length) return false;
+
+  let visibleTooltipNeedsUpdate = false;
+  for (let groupIndex = 0; groupIndex < payload.groups.length; groupIndex++) {
+    const group = payload.groups[groupIndex];
+    const section = sections[groupIndex];
+    const header = section.querySelector('.group-header');
+    const rows = Array.from(section.querySelectorAll('.ticker-row'));
+    if (header?.dataset.category !== group.category || rows.length !== group.items.length) {
+      return false;
+    }
+    if (rows.some((row, index) => row.dataset.code !== group.items[index].code)) {
+      return false;
+    }
+
+    section.classList.toggle('collapsed', collapsed.has(group.category));
+    const groupLabel = section.querySelector('.group-label');
+    if (groupLabel) groupLabel.textContent = group.label;
+
+    for (let itemIndex = 0; itemIndex < group.items.length; itemIndex++) {
+      const item = group.items[itemIndex];
+      const row = rows[itemIndex];
+      const tooltipChanged = row.dataset.tooltip !== item.tooltip;
+      row.dataset.tooltip = item.tooltip;
+
+      const trend = row.querySelector('.trend');
+      if (trend) {
+        trend.className = 'trend ' + item.trend;
+        trend.textContent = trendSymbol(item.trend);
+      }
+
+      const nameText = row.querySelector('.name-text');
+      if (nameText) nameText.textContent = item.name;
+      const name = row.querySelector('.name');
+      const existingDelayBadge = row.querySelector('.delay-badge');
+      if (item.delayed && !existingDelayBadge && name) {
+        const delayBadge = document.createElement('span');
+        delayBadge.className = 'delay-badge';
+        delayBadge.title = '延迟行情（通常至少延迟约 15 分钟）';
+        delayBadge.textContent = 'D';
+        name.appendChild(delayBadge);
+      } else if (!item.delayed && existingDelayBadge) {
+        existingDelayBadge.remove();
+      }
+
+      const currentPrice = row.querySelector('.current-price');
+      if (currentPrice) currentPrice.textContent = item.price;
+      const percent = row.querySelector('.percent');
+      if (percent) {
+        percent.className = 'percent ' + item.trend;
+        percent.textContent = item.percent ? '(' + item.percent + ')' : '';
+      }
+
+      const pinButton = row.querySelector('.pin-button');
+      if (pinButton) {
+        pinButton.classList.toggle('pinned', item.pinned);
+        pinButton.title = item.pinned
+          ? '状态栏：已显示（点击移除）'
+          : '状态栏：未显示（点击固定）';
+        pinButton.setAttribute('aria-pressed', String(item.pinned));
+        pinButton.innerHTML = item.pinned ? pinOnSvg : pinOffSvg;
+      }
+
+      if (tooltipChanged && tooltipRow === row && !stockTooltip.hidden) {
+        visibleTooltipNeedsUpdate = true;
+      }
+    }
+  }
+
+  if (visibleTooltipNeedsUpdate && tooltipRow) {
+    showStockTooltip(tooltipRow, tooltipX, tooltipY);
+  }
+  return true;
+}
+
 function render() {
-  hideStockTooltip();
   const payload = latestPayload;
+  if (updateExistingRows(payload)) return;
+
+  hideStockTooltip();
   if (payload.state === 'loading') {
     app.innerHTML = '<div class="state">正在获取行情数据…</div>';
     return;
