@@ -1,8 +1,5 @@
 import * as vscode from 'vscode';
 import { StockData, formatTicker, applyFormat, buildTooltip } from './types';
-import type { DailyPnlSummary } from './holdings';
-
-const DAILY_PNL_KEY = '__stock_bar_daily_pnl__';
 
 /**
  * 状态栏管理器
@@ -77,51 +74,20 @@ export class StatusBarManager {
    * @param dataList 行情数据列表
    * @param template 显示模板
    */
-  update(dataList: StockData[], template: string, dailyPnl?: DailyPnlSummary): void {
+  update(dataList: StockData[], template: string): void {
     // 有数据到达时隐藏加载提示
     if (this.loadingItem) {
       this.hideLoading();
     }
     // 限制显示数量
     const limited = dataList.slice(0, this.maxItems);
-    const nextOrder = [
-      ...(dailyPnl?.hasHoldings ? [DAILY_PNL_KEY] : []),
-      ...limited.map(data => data.code),
-    ];
+    const nextOrder = limited.map(data => data.code);
     if (!sameOrder(this.itemOrder, nextOrder)) {
       // StatusBarItem 的 priority 创建后不可修改；排序变化时必须重建。
       this.disposeItems();
       this.itemOrder = nextOrder;
     }
     const activeCodes = new Set<string>();
-
-    if (dailyPnl?.hasHoldings) {
-      const availableCount = dailyPnl.positions.length - dailyPnl.unavailableCount;
-      const text = availableCount > 0
-        ? `💰 ${formatPnl(dailyPnl.total)}`
-        : '💰 --';
-      const tooltipLines = [
-        'A 股持仓今日盈亏',
-        '---',
-        ...dailyPnl.positions.map(position => (
-          position.pnl === undefined
-            ? `${position.name} × ${formatQuantity(position.quantity)}：行情不可用`
-            : `${position.name} × ${formatQuantity(position.quantity)}：${formatPnl(position.pnl)}`
-        )),
-        '---',
-        availableCount > 0 ? `合计：${formatPnl(dailyPnl.total)}` : '合计：行情不可用',
-        '点击打开 A 股持仓管理',
-      ];
-      activeCodes.add(DAILY_PNL_KEY);
-      this.createOrUpdateItem(
-        DAILY_PNL_KEY,
-        text,
-        tooltipLines.join('\n'),
-        availableCount > 0 ? this.getColor(dailyPnl.total) : (this.flatColor || '#888888'),
-        -1,
-        'stock-bar.manageHoldings',
-      );
-    }
 
     for (let i = 0; i < limited.length; i++) {
       const data = limited[i];
@@ -190,7 +156,6 @@ export class StatusBarManager {
     tooltip: string,
     color: string,
     priorityOffset: number,
-    command = 'stock-bar.refresh',
   ): void {
     let item = this.items.get(code);
     if (!item) {
@@ -199,7 +164,7 @@ export class StatusBarManager {
         vscode.StatusBarAlignment.Left,
         100 - priorityOffset,
       );
-      item.command = command;
+      item.command = 'stock-bar.refresh';
       this.items.set(code, item);
     }
 
@@ -217,18 +182,6 @@ export class StatusBarManager {
     if (changePercent < 0) return this.fallColor;
     return this.flatColor;
   }
-}
-
-function formatPnl(value: number): string {
-  const sign = value > 0 ? '+' : '';
-  return `${sign}¥${value.toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-function formatQuantity(value: number): string {
-  return value.toLocaleString('zh-CN', { maximumFractionDigits: 4 });
 }
 
 function sameOrder(current: readonly string[], next: readonly string[]): boolean {

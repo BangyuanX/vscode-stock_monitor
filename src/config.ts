@@ -44,7 +44,6 @@ export function readConfig(): AppConfig {
   const defaultPrecisionVal = precision['default'] ?? -1;
   const premiumCodes = config.get<string[]>('premiumCodes', []);
   const priceScale = config.get<Record<string, number>>('scale', {});
-  const rawHoldings = config.get<Record<string, number>>('holdings', {}) || {};
 
   // 所有代码统一走 stockCodes
   // 推荐格式：usr_NVDA（新浪美股）、BTC/USDT（Binance 加密货币/美股代币）
@@ -57,12 +56,6 @@ export function readConfig(): AppConfig {
     : normalizeCodeList(rawStatusBarCodes).filter(code => availableCodes.has(code));
 
   const formatFields = extractFormatFields(format);
-  const holdings = Object.fromEntries(
-    Object.entries(rawHoldings)
-      .map(([code, quantity]) => [normalizeConfiguredCode(code), Number(quantity)] as const)
-      .filter(([code, quantity]) => code && Number.isFinite(quantity) && quantity > 0),
-  );
-
   return {
     stockCodes,
     statusBarCodes,
@@ -78,7 +71,6 @@ export function readConfig(): AppConfig {
     defaultPrecision: defaultPrecisionVal,
     premiumCodes,
     priceScale,
-    holdings,
   };
 }
 

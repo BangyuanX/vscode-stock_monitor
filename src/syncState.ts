@@ -4,7 +4,7 @@ import { readConfig } from './config';
 const SYNC_KEY = 'stock-bar.synced-config.v1';
 const LOCAL_APPLIED_KEY = 'stock-bar.synced-config.applied-id';
 const LOCAL_APPLIED_VALUES_KEY = 'stock-bar.synced-config.applied-values';
-const SYNC_VERSION = 2;
+const SYNC_VERSION = 5;
 
 interface SyncedConfigValues {
   codes: string[];
@@ -18,7 +18,6 @@ interface SyncedConfigValues {
   flatColor: string;
   premiumCodes: string[];
   scale: Record<string, number>;
-  holdings: Record<string, number>;
 }
 
 interface SyncedConfigSnapshot {
@@ -40,7 +39,6 @@ const SETTING_KEYS: ReadonlyArray<keyof SyncedConfigValues> = [
   'flatColor',
   'premiumCodes',
   'scale',
-  'holdings',
 ];
 
 /** 将 Stock Bar 配置保存到 VS Code 可跨设备同步的扩展 globalState。 */
@@ -230,7 +228,6 @@ function readLocalValues(): SyncedConfigValues {
     flatColor: config.flatColor,
     premiumCodes: config.premiumCodes,
     scale: config.priceScale,
-    holdings: config.holdings,
   };
 }
 
@@ -256,7 +253,11 @@ function parseSyncedConfigSnapshot(value: unknown): SyncedConfigSnapshot | undef
   if (!value || typeof value !== 'object') return undefined;
   const candidate = value as Partial<SyncedConfigSnapshot>;
   if (
-    (candidate.version !== 1 && candidate.version !== SYNC_VERSION)
+    (candidate.version !== 1
+      && candidate.version !== 2
+      && candidate.version !== 3
+      && candidate.version !== 4
+      && candidate.version !== SYNC_VERSION)
     || typeof candidate.id !== 'string'
     || typeof candidate.updatedAt !== 'number'
     || !candidate.values
@@ -275,18 +276,24 @@ function parseSyncedConfigSnapshot(value: unknown): SyncedConfigSnapshot | undef
     && typeof values.fallColor === 'string'
     && typeof values.flatColor === 'string'
     && Array.isArray(values.premiumCodes)
-    && typeof values.scale === 'object'
-    && (candidate.version === 1 || typeof values.holdings === 'object');
+    && typeof values.scale === 'object';
   if (!valid) return undefined;
   return {
     version: SYNC_VERSION,
     id: candidate.id,
     updatedAt: candidate.updatedAt,
     values: {
-      ...(values as SyncedConfigValues),
-      holdings: values.holdings && typeof values.holdings === 'object'
-        ? values.holdings
-        : {},
+      codes: values.codes as string[],
+      statusBarCodes: values.statusBarCodes as string[] | null,
+      interval: values.interval as number,
+      format: values.format as string,
+      precision: values.precision as Record<string, number>,
+      maxItems: values.maxItems as number,
+      riseColor: values.riseColor as string,
+      fallColor: values.fallColor as string,
+      flatColor: values.flatColor as string,
+      premiumCodes: values.premiumCodes as string[],
+      scale: values.scale as Record<string, number>,
     },
   };
 }

@@ -414,6 +414,17 @@ function connectToTarget(
   });
 }
 
+const dnsAddressCursor = new Map<string, number>();
+
+function selectRotatingAddresses(hostname: string, addresses: string[], limit: number): string[] {
+  const unique = Array.from(new Set(addresses));
+  if (unique.length <= limit) return unique;
+  const start = dnsAddressCursor.get(hostname) ?? 0;
+  const selected = Array.from({ length: limit }, (_, index) => unique[(start + index) % unique.length]);
+  dnsAddressCursor.set(hostname, (start + limit) % unique.length);
+  return selected;
+}
+
 async function directConnect(
   hostname: string,
   port: number,
@@ -421,27 +432,34 @@ async function directConnect(
   timeoutMs: number,
   resolveDns?: boolean,
 ): Promise<net.Socket | tls.TLSSocket> {
-  let connectTargets = [hostname];
+  let resolvedAddresses: string[] = [];
 
   if (resolveDns) {
     try {
       const addresses = await dns.promises.resolve4(hostname);
-      if (addresses.length > 0) {
-        connectTargets = Array.from(new Set(addresses));
-      }
+      resolvedAddresses = selectRotatingAddresses(hostname, addresses, 3);
     } catch {
       // DNS 预解析失败，回退到 hostname 连接
     }
   }
 
-  // DNS/CDN 通常返回多个 IP。VS Code Extension Host 偶尔会卡在其中一个
-  // 不可达地址上，因此在总超时预算内逐个尝试，而不是固定使用第一个地址。
-  const attemptTimeout = connectTargets.length > 1
-    ? Math.max(2_000, Math.ceil(timeoutMs / connectTargets.length))
-    : timeoutMs;
+  // 先让系统网络栈用 hostname 连接（与 curl/浏览器路径一致），失败后再尝试
+  // 最多 3 个轮换的 CDN IPv4。这样既不会把每个 IP 固定压到 2 秒，也能避开
+  // Extension Host 偶发不可达的单个 CDN 节点。
+  const connectTargets = resolveDns && resolvedAddresses.length > 0
+    ? [hostname, ...resolvedAddresses]
+    : [hostname];
+  const deadline = Date.now() + timeoutMs;
   let lastError: Error | undefined;
 
-  for (const connectTarget of connectTargets) {
+  for (let index = 0; index < connectTargets.length; index++) {
+    const connectTarget = connectTargets[index];
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const remainingTargets = connectTargets.length - index;
+    const attemptTimeout = connectTarget === hostname && connectTargets.length > 1
+      ? Math.min(4_000, remaining)
+      : Math.max(500, Math.floor(remaining / remainingTargets));
     try {
       return await connectToTarget(hostname, connectTarget, port, useTls, attemptTimeout);
     } catch (error) {
@@ -698,7 +716,7 @@ export async function directGet(
   const timeoutMs = options?.timeoutMs ?? 10000;
   const headers: Record<string, string> = { ...options?.headers };
 
-  const sock = await directConnect(hostname, port, useTls, timeoutMs);
+  const sock = await directConnect(hostname, port, useTls, timeoutMs, options?.resolveDns);
   return await sendGetRequest(sock, 'DIRECT', hostname, path, headers, timeoutMs);
 }
 

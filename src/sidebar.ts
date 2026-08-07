@@ -340,18 +340,61 @@ export function getWebviewHtml(webview: vscode.Webview): string {
     .drag-handle { cursor: grab; opacity: .45; }
     .drag-handle:active { cursor: grabbing; }
     .icon-button svg, .delete-button svg, .drag-handle svg { width: 14px; height: 14px; }
+    .stock-tooltip {
+      position: fixed;
+      z-index: 1000;
+      max-width: min(340px, calc(100vw - 12px));
+      padding: 7px 9px;
+      border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-widget-border));
+      border-radius: 4px;
+      color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+      background: var(--vscode-editorHoverWidget-background, var(--vscode-editor-background));
+      box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+      font-family: var(--vscode-editor-font-family), SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      font-size: calc(var(--vscode-font-size) - 2px);
+      font-variant-numeric: tabular-nums;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+      pointer-events: none;
+    }
+    .tooltip-title { font-weight: 600; }
+    .tooltip-divider {
+      height: 1px;
+      margin: 5px 0;
+      background: var(--vscode-editorHoverWidget-border, var(--vscode-widget-border));
+    }
+    .tooltip-message { margin: 3px 0; white-space: normal; }
+    .tooltip-row {
+      display: grid;
+      grid-template-columns: 4.5em minmax(0, 1fr);
+      column-gap: 9px;
+      align-items: baseline;
+      min-height: 1.35em;
+    }
+    .tooltip-label {
+      color: var(--vscode-descriptionForeground);
+      text-align: right;
+      white-space: nowrap;
+    }
+    .tooltip-value { white-space: pre; }
   </style>
 </head>
 <body>
   <main id="app"><div class="state">正在获取行情数据…</div></main>
+  <div id="stock-tooltip" class="stock-tooltip" role="tooltip" hidden></div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const app = document.getElementById('app');
+    const stockTooltip = document.getElementById('stock-tooltip');
     const savedState = vscode.getState() || {};
     const collapsed = new Set(savedState.collapsed || []);
     let latestPayload = { state: 'loading', groups: [] };
     let draggedCode = '';
     let draggedCategory = '';
+    let tooltipTimer;
+    let tooltipRow;
+    let tooltipX = 0;
+    let tooltipY = 0;
 
     const pinOffSvg = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round" d="M5.1 1.8h5.8l-.9 4 2.2 2.1v1H8.7v4.5L8 14.5l-.7-1.1V8.9H3.8v-1L6 5.8l-.9-4z"/><path d="M2.3 2.3l11.4 11.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
     const pinOnSvg = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M5 1.5h6l-1 4.2 2.4 2.2v1.3H8.8v4.2L8 14.7l-.8-1.3V9.2H3.6V7.9L6 5.7 5 1.5z"/></svg>';
@@ -379,6 +422,72 @@ export function getWebviewHtml(webview: vscode.Webview): string {
       document.querySelectorAll('.drop-before,.drop-after').forEach(row => {
         row.classList.remove('drop-before', 'drop-after');
       });
+    }
+
+    function positionTooltip(x, y) {
+      const gap = 10;
+      const bounds = stockTooltip.getBoundingClientRect();
+      let left = x + gap;
+      let top = y + gap;
+      if (left + bounds.width > window.innerWidth - 6) left = x - bounds.width - gap;
+      if (top + bounds.height > window.innerHeight - 6) top = y - bounds.height - gap;
+      stockTooltip.style.left = Math.max(6, left) + 'px';
+      stockTooltip.style.top = Math.max(6, top) + 'px';
+    }
+
+    function showStockTooltip(row, x, y) {
+      if (!row?.dataset.tooltip) return;
+      tooltipRow = row;
+      tooltipX = x;
+      tooltipY = y;
+      stockTooltip.replaceChildren();
+      row.dataset.tooltip.split('\n').forEach((line, index) => {
+        if (line === '---') {
+          const divider = document.createElement('div');
+          divider.className = 'tooltip-divider';
+          stockTooltip.appendChild(divider);
+          return;
+        }
+        const tabIndex = line.indexOf('\t');
+        if (tabIndex >= 0) {
+          const item = document.createElement('div');
+          item.className = 'tooltip-row';
+          const label = document.createElement('span');
+          label.className = 'tooltip-label';
+          label.textContent = line.slice(0, tabIndex);
+          const value = document.createElement('span');
+          value.className = 'tooltip-value';
+          value.textContent = line.slice(tabIndex + 1);
+          item.append(label, value);
+          stockTooltip.appendChild(item);
+          return;
+        }
+        const message = document.createElement('div');
+        message.className = index === 0 ? 'tooltip-title' : 'tooltip-message';
+        message.textContent = line;
+        stockTooltip.appendChild(message);
+      });
+      stockTooltip.hidden = false;
+      positionTooltip(x, y);
+    }
+
+    function scheduleStockTooltip(row, x, y) {
+      if (tooltipTimer) clearTimeout(tooltipTimer);
+      tooltipRow = row;
+      tooltipX = x;
+      tooltipY = y;
+      tooltipTimer = setTimeout(() => {
+        tooltipTimer = undefined;
+        if (tooltipRow === row) showStockTooltip(row, tooltipX, tooltipY);
+      }, 90);
+    }
+
+    function hideStockTooltip(row) {
+      if (row && tooltipRow !== row) return;
+      if (tooltipTimer) clearTimeout(tooltipTimer);
+      tooltipTimer = undefined;
+      tooltipRow = undefined;
+      stockTooltip.hidden = true;
     }
 
     function bindInteractions() {
@@ -421,6 +530,24 @@ export function getWebviewHtml(webview: vscode.Webview): string {
         });
       });
       document.querySelectorAll('.ticker-row').forEach(row => {
+        row.addEventListener('pointerenter', event => {
+          scheduleStockTooltip(row, event.clientX, event.clientY);
+        });
+        row.addEventListener('pointermove', event => {
+          tooltipX = event.clientX;
+          tooltipY = event.clientY;
+          if (!stockTooltip.hidden && tooltipRow === row) positionTooltip(tooltipX, tooltipY);
+        });
+        row.addEventListener('pointerleave', () => hideStockTooltip(row));
+        row.addEventListener('focusin', () => {
+          const bounds = row.getBoundingClientRect();
+          showStockTooltip(row, bounds.left + Math.min(bounds.width / 2, 120), bounds.bottom);
+        });
+        row.addEventListener('focusout', () => {
+          setTimeout(() => {
+            if (!row.contains(document.activeElement)) hideStockTooltip(row);
+          }, 0);
+        });
         row.addEventListener('dragover', event => {
           if (!draggedCode || draggedCode === row.dataset.code || draggedCategory !== row.dataset.category) return;
           event.preventDefault();
@@ -444,6 +571,7 @@ export function getWebviewHtml(webview: vscode.Webview): string {
     }
 
     function render() {
+      hideStockTooltip();
       const payload = latestPayload;
       if (payload.state === 'loading') {
         app.innerHTML = '<div class="state">正在获取行情数据…</div>';
@@ -465,7 +593,7 @@ export function getWebviewHtml(webview: vscode.Webview): string {
         html += '<div class="group-items">';
         for (const item of group.items) {
           const code = escapeHtml(item.code);
-          html += '<div class="ticker-row" data-code="' + code + '" data-category="' + escapeHtml(group.category) + '" title="' + escapeHtml(item.tooltip) + '">';
+          html += '<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="' + code + '" data-category="' + escapeHtml(group.category) + '" data-tooltip="' + escapeHtml(item.tooltip) + '">';
           html += '<span class="trend ' + item.trend + '">' + trendSymbol(item.trend) + '</span>';
           html += '<span class="name"><span class="name-text">' + escapeHtml(item.name) + '</span>' + (item.delayed ? '<span class="delay-badge" title="延迟行情（通常至少延迟约 15 分钟）">D</span>' : '') + '</span>';
           html += '<button class="price" data-code="' + code + '" title="设置小数位数"><span class="current-price">' + escapeHtml(item.price) + '</span><span class="percent ' + item.trend + '">' + (item.percent ? '(' + escapeHtml(item.percent) + ')' : '') + '</span></button>';

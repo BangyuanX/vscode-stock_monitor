@@ -12,12 +12,10 @@ import { StatusBarManager } from './statusBar';
 import { SidebarManager } from './sidebar';
 import { SyncStateManager } from './syncState';
 import { StockData } from './types';
-import { HoldingsManager, calculateDailyPnl } from './holdings';
 
 let statusBarManager: StatusBarManager;
 let sidebarManager: SidebarManager;
 let syncStateManager: SyncStateManager;
-let holdingsManager: HoldingsManager;
 let pollingTimer: NodeJS.Timeout | null = null;
 let isRefreshing = false;
 let refreshPending = false;
@@ -27,14 +25,12 @@ interface CodeQuickPickItem extends vscode.QuickPickItem {
   code: string;
 }
 
-export async function activate(context: vscode.ExtensionContext) {
+export function activate(context: vscode.ExtensionContext) {
   console.log('[StockBar] 扩展已激活');
 
-  await removeObsoleteSidebarCodesSetting();
   syncStateManager = new SyncStateManager(context);
-  await syncStateManager.initialize();
 
-  // 创建状态栏管理器
+  // 先注册并启动行情 UI；配置同步在后台初始化，不能阻塞侧边栏。
   statusBarManager = new StatusBarManager();
   sidebarManager = new SidebarManager({
     toggleStatusBar,
@@ -42,7 +38,6 @@ export async function activate(context: vscode.ExtensionContext) {
     moveTicker: moveTickerRelative,
     setPrecision: managePrecision,
   });
-  holdingsManager = new HoldingsManager(updateHoldings);
 
   // 注册命令
   context.subscriptions.push(
@@ -106,9 +101,6 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('stock-bar.managePrecision', () => managePrecision()),
     vscode.commands.registerCommand('stock-bar.syncNow', () => syncStateManager.syncNow()),
-    vscode.commands.registerCommand('stock-bar.manageHoldings', () => {
-      holdingsManager.show(readConfig(), latestDataByCode);
-    }),
   );
 
   // 显示初始加载状态
@@ -121,7 +113,18 @@ export async function activate(context: vscode.ExtensionContext) {
   // 初次刷新
   void refreshAll();
 
+  void initializeBackgroundServices();
+
   console.log('[StockBar] 扩展初始化完成');
+}
+
+async function initializeBackgroundServices(): Promise<void> {
+  try {
+    await removeObsoleteSettings();
+    await syncStateManager.initialize();
+  } catch (error) {
+    console.error('[StockBar] 后台配置同步初始化失败，不影响行情显示:', error);
+  }
 }
 
 export function deactivate() {
@@ -136,9 +139,6 @@ export function deactivate() {
   if (syncStateManager) {
     syncStateManager.dispose();
   }
-  if (holdingsManager) {
-    holdingsManager.dispose();
-  }
 }
 
 async function updateCodes(codes: string[]): Promise<void> {
@@ -146,18 +146,20 @@ async function updateCodes(codes: string[]): Promise<void> {
   await config.update('codes', codes, vscode.ConfigurationTarget.Global);
 }
 
-async function removeObsoleteSidebarCodesSetting(): Promise<void> {
+async function removeObsoleteSettings(): Promise<void> {
   const config = vscode.workspace.getConfiguration('stock-bar');
-  const inspected = config.inspect<string[] | null>('sidebarCodes');
-  if (!inspected) return;
-  if (inspected.globalValue !== undefined) {
-    await config.update('sidebarCodes', undefined, vscode.ConfigurationTarget.Global);
-  }
-  if (inspected.workspaceValue !== undefined) {
-    await config.update('sidebarCodes', undefined, vscode.ConfigurationTarget.Workspace);
-  }
-  if (inspected.workspaceFolderValue !== undefined) {
-    await config.update('sidebarCodes', undefined, vscode.ConfigurationTarget.WorkspaceFolder);
+  for (const key of ['sidebarCodes', 'holdings', 'holdingDailyTrades']) {
+    const inspected = config.inspect(key);
+    if (!inspected) continue;
+    if (inspected.globalValue !== undefined) {
+      await config.update(key, undefined, vscode.ConfigurationTarget.Global);
+    }
+    if (inspected.workspaceValue !== undefined) {
+      await config.update(key, undefined, vscode.ConfigurationTarget.Workspace);
+    }
+    if (inspected.workspaceFolderValue !== undefined) {
+      await config.update(key, undefined, vscode.ConfigurationTarget.WorkspaceFolder);
+    }
   }
 }
 
@@ -168,11 +170,6 @@ async function updateStatusBarCodes(codes: string[] | null): Promise<void> {
     : Array.from(new Set(codes.map(normalizeConfiguredCode).filter(Boolean)));
   await config.update('statusBarCodes', normalized, vscode.ConfigurationTarget.Global);
   renderLatestData();
-}
-
-async function updateHoldings(holdings: Record<string, number>): Promise<void> {
-  const config = vscode.workspace.getConfiguration('stock-bar');
-  await config.update('holdings', holdings, vscode.ConfigurationTarget.Global);
 }
 
 async function removeCodes(codesToRemove: readonly string[]): Promise<void> {
@@ -188,14 +185,6 @@ async function removeCodes(codesToRemove: readonly string[]): Promise<void> {
     await updateStatusBarCodes(
       configured.filter(code => !removing.has(normalizeConfiguredCode(code))),
     );
-  }
-
-  const holdings = config.get<Record<string, number>>('holdings', {});
-  const nextHoldings = Object.fromEntries(
-    Object.entries(holdings).filter(([code]) => !removing.has(normalizeConfiguredCode(code))),
-  );
-  if (Object.keys(nextHoldings).length !== Object.keys(holdings).length) {
-    await updateHoldings(nextHoldings);
   }
 }
 
@@ -328,10 +317,8 @@ function renderLatestData(): void {
     const data = latestDataByCode.get(code);
     return data ? [data] : [];
   });
-  const dailyPnl = calculateDailyPnl(latestDataByCode, config.holdings);
-  statusBarManager.update(statusBarData, config.format, dailyPnl);
+  statusBarManager.update(statusBarData, config.format);
   sidebarManager.update(allData, config);
-  holdingsManager.update(config, latestDataByCode);
 }
 
 /**

@@ -11,7 +11,7 @@ export function parseSinaCnFields(code: string, fields: string[]): StockData | n
   if (isNaN(reportedPrice) || isNaN(yestclose)) return null;
 
   // 新浪在 A 股尚未开市或停牌时可能返回最新价 0，但昨收仍然有效。
-  // 将这种 0 值视为“暂无成交”，避免价格显示为 0、今日盈亏被误算为巨额亏损。
+  // 将这种 0 值视为“暂无成交”，避免行情价格错误显示为 0。
   const usingPreviousClose = reportedPrice <= 0 && yestclose > 0;
   const price = usingPreviousClose ? yestclose : reportedPrice;
 

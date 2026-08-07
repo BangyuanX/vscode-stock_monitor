@@ -60,7 +60,6 @@ export interface AppConfig {
   defaultPrecision: number;          // 默认小数位数
   premiumCodes: string[];            // 需要显示 ETF 溢价率的代码列表
   priceScale: Record<string, number>; // 代码 → 显示乘数（如 fx_sjpycnh: 100）
-  holdings: Record<string, number>;   // A 股代码 → 持仓股数
 }
 
 /** 标准化的模板占位符配置（用于构建格式化输出） */
@@ -200,23 +199,27 @@ export function buildTooltip(data: StockData, precision?: number, scale?: number
 
   if (data.marketState && data.marketState !== 'REGULAR') {
     const stateLabel = data.marketState === 'PRE' ? '盘前' : data.marketState === 'POST' ? '盘后' : '夜盘';
-    lines.push(`📊 ${stateLabel} ${icon} 现价: ${formatPrice(price, precision)}`);
-    lines.push(`  涨跌: ${formatChange(change)}（${formatPercent(data.changePercent)}）`);
-    lines.push(`  昨收: ${formatPrice(yestclose, precision)}`);
+    lines.push(`阶段\t${stateLabel}`);
+    lines.push(`现价\t${icon} ${formatPrice(price, precision)}`);
+    lines.push(`涨跌\t${formatChange(change)}  (${formatPercent(data.changePercent)})`);
+    lines.push(`昨收\t${formatPrice(yestclose, precision)}`);
   } else {
-    lines.push(`${icon} 现价: ${formatPrice(price, precision)}`);
-    lines.push(`  涨跌: ${formatChange(change)}（${formatPercent(data.changePercent)}）`);
-    lines.push(`  今开: ${formatPrice(open, precision)}  昨收: ${formatPrice(yestclose, precision)}`);
-    lines.push(`  最高: ${formatPrice(high, precision)}  最低: ${formatPrice(low, precision)}`);
+    lines.push(`现价\t${icon} ${formatPrice(price, precision)}`);
+    lines.push(`涨跌\t${formatChange(change)}  (${formatPercent(data.changePercent)})`);
+    lines.push(`今开\t${formatPrice(open, precision)}`);
+    lines.push(`昨收\t${formatPrice(yestclose, precision)}`);
+    lines.push(`最高\t${formatPrice(high, precision)}`);
+    lines.push(`最低\t${formatPrice(low, precision)}`);
   }
 
-  lines.push(`  时间: ${formatCstTime(data.time)}`);
+  lines.push(`时间\t${formatCstTime(data.time)}`);
 
   // ETF 溢价率（需配置 premiumCodes 从交易所获取 IOPV）
   if (data.iopv && data.iopv > 0) {
     const premium = ((data.price - data.iopv) / data.iopv) * 100;
     const premiumIcon = premium > 0 ? '📈' : premium < 0 ? '📉' : '➡️';
-    lines.push(`  溢价: ${premiumIcon} ${formatPercent(premium)}  IOPV: ${formatPrice(data.iopv * multiplier, precision)}`);
+    lines.push(`溢价\t${premiumIcon} ${formatPercent(premium)}`);
+    lines.push(`IOPV\t${formatPrice(data.iopv * multiplier, precision)}`);
   }
 
   return lines.join('\n');

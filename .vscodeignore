@@ -5,6 +5,12 @@ tsconfig.json
 .gitignore
 **/*.ts
 **/*.map
+out/**/*.test.js
+out/tests/**
+out/api/**
+out/config.js
+out/statusBar.js
+out/types.js
 node_modules/**
 **/package-lock.json
 **/pnpm-lock.yaml
