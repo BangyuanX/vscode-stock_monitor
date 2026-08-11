@@ -182,11 +182,9 @@ function formatCstTime(raw?: string): string {
 export function buildTooltip(data: StockData, precision?: number, scale?: number): string {
   const multiplier = scale || 1;
   const change = data.change * multiplier;
-  const changeBasis = data.changeBasis ?? 'previousClose';
-  const basisPrice = changeBasis === 'open' ? data.open : data.yestclose;
   const displayPrice = data.price * multiplier;
   const displayPrecision = resolvePricePrecision(displayPrice, precision);
-  const changeSummary = `${formatPrice(basisPrice * multiplier, displayPrecision)}${formatChange(change, displayPrecision)} (${formatPercent(data.changePercent)})`;
+  const changeSummary = `${formatChange(change, displayPrecision)} (${formatPercent(data.changePercent)})`;
   const lines = [
     `${data.name}（${data.code}）`,
     `---`,

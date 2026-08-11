@@ -126,14 +126,8 @@ function appendDayRange(row) {
     referenceRow.appendChild(referenceLabel);
   }
 
-  const caption = document.createElement('div');
-  caption.className = 'tooltip-range-caption';
-  caption.textContent = range.flat
-    ? '暂无日内振幅'
-    : '日内位置 ' + Math.round(range.position) + '%';
   container.append(labels, track);
   if (referenceRow) container.appendChild(referenceRow);
-  container.appendChild(caption);
   stockTooltip.appendChild(container);
 }
 
@@ -157,10 +151,10 @@ function showStockTooltip(row, x, y) {
       title.textContent = match ? match[1] : line;
       if (match) codeValue = match[2];
       header.appendChild(title);
-      const current = document.createElement('span');
-      current.className = 'tooltip-current ' + trend;
-      current.textContent = row.querySelector('.current-price')?.textContent || '—';
-      header.appendChild(current);
+      const code = document.createElement('span');
+      code.className = 'tooltip-code';
+      code.textContent = codeValue;
+      header.appendChild(code);
       stockTooltip.appendChild(header);
       return;
     }
@@ -207,15 +201,12 @@ function showStockTooltip(row, x, y) {
     stockTooltip.appendChild(message);
   });
   appendDayRange(row);
-  if (codeValue || timeValue) {
+  if (timeValue) {
     const footer = document.createElement('div');
     footer.className = 'tooltip-row tooltip-footer';
-    const code = document.createElement('span');
-    code.className = 'tooltip-code';
-    code.textContent = codeValue;
     const time = document.createElement('span');
     time.textContent = timeValue;
-    footer.append(code, time);
+    footer.appendChild(time);
     stockTooltip.appendChild(footer);
   }
   stockTooltip.hidden = false;

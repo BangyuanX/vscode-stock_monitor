@@ -25,7 +25,6 @@ interface SidebarDayRange {
   lowTrend: PriceTrend;
   highTrend: PriceTrend;
   position: number;
-  flat: boolean;
   reference?: SidebarRangeReference;
 }
 
@@ -195,7 +194,6 @@ export class SidebarManager implements vscode.WebviewViewProvider, vscode.Dispos
               lowTrend: comparePriceToBasis(data.low, changeBasis),
               highTrend: comparePriceToBasis(data.high, changeBasis),
               position: rangePosition,
-              flat: high === low,
               reference: referencePosition
                 ? {
                     label: referenceLabel,
@@ -469,18 +467,10 @@ export function getWebviewHtml(
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .tooltip-current {
-      flex: 0 0 auto;
-      color: var(--vscode-foreground);
-      font-size: 1.12em;
-      font-weight: 650;
-      white-space: nowrap;
-    }
-    .tooltip-current.rise { color: var(--vscode-charts-red); }
-    .tooltip-current.fall { color: var(--vscode-charts-green); }
     .tooltip-code {
       flex: 0 0 auto;
       color: var(--vscode-descriptionForeground);
+      font-size: .9em;
       white-space: nowrap;
     }
     .tooltip-divider {
@@ -611,18 +601,13 @@ export function getWebviewHtml(
     }
     .tooltip-reference-label.align-left { transform: none; }
     .tooltip-reference-label.align-right { transform: translateX(-100%); }
-    .tooltip-range-caption {
-      margin-top: 4px;
-      color: var(--vscode-descriptionForeground);
-      font-size: .88em;
-      text-align: center;
-    }
     .tooltip-footer {
       margin-top: 7px;
       padding-top: 5px;
       border-top: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-widget-border));
       color: var(--vscode-descriptionForeground);
       font-size: .86em;
+      justify-content: flex-end;
     }
   </style>
 </head>
@@ -758,14 +743,8 @@ export function getWebviewHtml(
         referenceRow.appendChild(referenceLabel);
       }
 
-      const caption = document.createElement('div');
-      caption.className = 'tooltip-range-caption';
-      caption.textContent = range.flat
-        ? '暂无日内振幅'
-        : '日内位置 ' + Math.round(range.position) + '%';
       container.append(labels, track);
       if (referenceRow) container.appendChild(referenceRow);
-      container.appendChild(caption);
       stockTooltip.appendChild(container);
     }
 
@@ -789,10 +768,10 @@ export function getWebviewHtml(
           title.textContent = match ? match[1] : line;
           if (match) codeValue = match[2];
           header.appendChild(title);
-          const current = document.createElement('span');
-          current.className = 'tooltip-current ' + trend;
-          current.textContent = row.querySelector('.current-price')?.textContent || '—';
-          header.appendChild(current);
+          const code = document.createElement('span');
+          code.className = 'tooltip-code';
+          code.textContent = codeValue;
+          header.appendChild(code);
           stockTooltip.appendChild(header);
           return;
         }
@@ -839,15 +818,12 @@ export function getWebviewHtml(
         stockTooltip.appendChild(message);
       });
       appendDayRange(row);
-      if (codeValue || timeValue) {
+      if (timeValue) {
         const footer = document.createElement('div');
         footer.className = 'tooltip-row tooltip-footer';
-        const code = document.createElement('span');
-        code.className = 'tooltip-code';
-        code.textContent = codeValue;
         const time = document.createElement('span');
         time.textContent = timeValue;
-        footer.append(code, time);
+        footer.appendChild(time);
         stockTooltip.appendChild(footer);
       }
       stockTooltip.hidden = false;
