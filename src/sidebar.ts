@@ -2,7 +2,20 @@ import * as vscode from 'vscode';
 import { AppConfig, StockData, buildTooltip, formatPrice, formatTicker } from './types';
 import { MARKET_GROUPS, MarketCategory, classifyMarket } from './market';
 import { getEffectiveStatusBarCodes, getSidebarOrderedCodes } from './config';
-import { PriceTrend, calculateDayRangePosition, comparePriceToBasis } from './dayRange';
+import {
+  PriceTrend,
+  ReferencePlacement,
+  calculateDayRangePosition,
+  calculateRangeReferencePosition,
+  comparePriceToBasis,
+} from './dayRange';
+
+interface SidebarRangeReference {
+  label: string;
+  value: string;
+  position: number;
+  placement: ReferencePlacement;
+}
 
 interface SidebarDayRange {
   current: string;
@@ -13,6 +26,7 @@ interface SidebarDayRange {
   highTrend: PriceTrend;
   position: number;
   flat: boolean;
+  reference?: SidebarRangeReference;
 }
 
 interface SidebarTicker {
@@ -142,6 +156,15 @@ export class SidebarManager implements vscode.WebviewViewProvider, vscode.Dispos
       const low = data.low * scale;
       const high = data.high * scale;
       const changeBasis = data.changeBasis === 'open' ? data.open : data.yestclose;
+      const referenceValue = changeBasis * scale;
+      const referencePosition = changeBasis > 0
+        ? calculateRangeReferencePosition(referenceValue, low, high)
+        : undefined;
+      const referenceLabel = data.changeBasis === 'open'
+        ? '今开'
+        : data.changeBasis === 'regularClose'
+          ? '收盘'
+          : data.changeBasis === 'rolling24h' ? '24H前' : '昨收';
       const rangePosition = data.error || current <= 0 || low <= 0 || high <= 0
         ? undefined
         : calculateDayRangePosition(current, low, high);
@@ -173,6 +196,13 @@ export class SidebarManager implements vscode.WebviewViewProvider, vscode.Dispos
               highTrend: comparePriceToBasis(data.high, changeBasis),
               position: rangePosition,
               flat: high === low,
+              reference: referencePosition
+                ? {
+                    label: referenceLabel,
+                    value: formatPrice(referenceValue, precision),
+                    ...referencePosition,
+                  }
+                : undefined,
             },
       });
       grouped.set(category, items);
@@ -556,6 +586,31 @@ export function getWebviewHtml(
       box-shadow: 0 0 0 1px var(--vscode-focusBorder);
       transform: translate(-50%, -50%);
     }
+    .tooltip-reference-marker {
+      position: absolute;
+      top: -5px;
+      width: 2px;
+      height: 15px;
+      border-radius: 1px;
+      background: var(--vscode-charts-yellow, #cca700);
+      transform: translateX(-50%);
+    }
+    .tooltip-reference-marker.left { transform: none; }
+    .tooltip-reference-marker.right { transform: translateX(-100%); }
+    .tooltip-reference-row {
+      position: relative;
+      height: 1.3em;
+      margin-top: 5px;
+      color: var(--vscode-charts-yellow, #cca700);
+      font-size: .86em;
+    }
+    .tooltip-reference-label {
+      position: absolute;
+      transform: translateX(-50%);
+      white-space: nowrap;
+    }
+    .tooltip-reference-label.align-left { transform: none; }
+    .tooltip-reference-label.align-right { transform: translateX(-100%); }
     .tooltip-range-caption {
       margin-top: 4px;
       color: var(--vscode-descriptionForeground);
@@ -678,12 +733,39 @@ export function getWebviewHtml(
       marker.style.left = range.position + '%';
       track.append(fill, marker);
 
+      let referenceRow;
+      if (range.reference && Number.isFinite(range.reference.position)) {
+        const reference = range.reference;
+        const referenceMarker = document.createElement('div');
+        referenceMarker.className = 'tooltip-reference-marker ' + reference.placement;
+        referenceMarker.style.left = reference.position + '%';
+        track.appendChild(referenceMarker);
+
+        referenceRow = document.createElement('div');
+        referenceRow.className = 'tooltip-reference-row';
+        const referenceLabel = document.createElement('span');
+        const alignClass = reference.placement === 'left' || reference.position < 18
+          ? 'align-left'
+          : reference.placement === 'right' || reference.position > 82
+            ? 'align-right' : '';
+        referenceLabel.className = 'tooltip-reference-label ' + alignClass;
+        referenceLabel.style.left = reference.position + '%';
+        referenceLabel.textContent = reference.placement === 'left'
+          ? '◀ ' + reference.label + ' ' + reference.value
+          : reference.placement === 'right'
+            ? reference.label + ' ' + reference.value + ' ▶'
+            : reference.label + ' ' + reference.value;
+        referenceRow.appendChild(referenceLabel);
+      }
+
       const caption = document.createElement('div');
       caption.className = 'tooltip-range-caption';
       caption.textContent = range.flat
         ? '暂无日内振幅'
         : '日内位置 ' + Math.round(range.position) + '%';
-      container.append(labels, track, caption);
+      container.append(labels, track);
+      if (referenceRow) container.appendChild(referenceRow);
+      container.appendChild(caption);
       stockTooltip.appendChild(container);
     }
 

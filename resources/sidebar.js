@@ -101,12 +101,39 @@ function appendDayRange(row) {
   marker.style.left = range.position + '%';
   track.append(fill, marker);
 
+  let referenceRow;
+  if (range.reference && Number.isFinite(range.reference.position)) {
+    const reference = range.reference;
+    const referenceMarker = document.createElement('div');
+    referenceMarker.className = 'tooltip-reference-marker ' + reference.placement;
+    referenceMarker.style.left = reference.position + '%';
+    track.appendChild(referenceMarker);
+
+    referenceRow = document.createElement('div');
+    referenceRow.className = 'tooltip-reference-row';
+    const referenceLabel = document.createElement('span');
+    const alignClass = reference.placement === 'left' || reference.position < 18
+      ? 'align-left'
+      : reference.placement === 'right' || reference.position > 82
+        ? 'align-right' : '';
+    referenceLabel.className = 'tooltip-reference-label ' + alignClass;
+    referenceLabel.style.left = reference.position + '%';
+    referenceLabel.textContent = reference.placement === 'left'
+      ? '◀ ' + reference.label + ' ' + reference.value
+      : reference.placement === 'right'
+        ? reference.label + ' ' + reference.value + ' ▶'
+        : reference.label + ' ' + reference.value;
+    referenceRow.appendChild(referenceLabel);
+  }
+
   const caption = document.createElement('div');
   caption.className = 'tooltip-range-caption';
   caption.textContent = range.flat
     ? '暂无日内振幅'
     : '日内位置 ' + Math.round(range.position) + '%';
-  container.append(labels, track, caption);
+  container.append(labels, track);
+  if (referenceRow) container.appendChild(referenceRow);
+  container.appendChild(caption);
   stockTooltip.appendChild(container);
 }
 

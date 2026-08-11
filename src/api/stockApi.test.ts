@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { calculateDayRangePosition, comparePriceToBasis } from '../dayRange';
+import {
+  calculateDayRangePosition,
+  calculateRangeReferencePosition,
+  comparePriceToBasis,
+} from '../dayRange';
 import { buildTooltip } from '../types';
 import { parseSinaCnFields } from './sinaCn';
 
@@ -76,4 +80,23 @@ test('日内低、现、高价格分别相对涨跌基准判断颜色', () => {
   assert.equal(comparePriceToBasis(25.30, 25), 'rise');
   assert.equal(comparePriceToBasis(25, 25), 'flat');
   assert.equal(comparePriceToBasis(25, 0), 'flat');
+});
+
+test('昨收标记在日内区间内定位，跳空时钉在对应边缘', () => {
+  assert.deepEqual(calculateRangeReferencePosition(25, 24, 26), {
+    position: 50,
+    placement: 'inside',
+  });
+  assert.deepEqual(calculateRangeReferencePosition(23, 24, 26), {
+    position: 0,
+    placement: 'left',
+  });
+  assert.deepEqual(calculateRangeReferencePosition(27, 24, 26), {
+    position: 100,
+    placement: 'right',
+  });
+  assert.deepEqual(calculateRangeReferencePosition(25, 25, 25), {
+    position: 50,
+    placement: 'inside',
+  });
 });
