@@ -106,7 +106,9 @@ export function formatPrice(price: number, precision?: number): string {
 
 /** 格式化涨跌额，带正负号 */
 export function formatChange(change: number, precision = 2): string {
-  return (change > 0 ? '+' : '') + change.toFixed(precision);
+  const magnitude = Math.abs(change).toFixed(precision);
+  if (Number(magnitude) === 0) return `±${magnitude}`;
+  return `${change > 0 ? '+' : '-'}${magnitude}`;
 }
 
 /** 格式化涨跌幅，带正负号和百分号 */

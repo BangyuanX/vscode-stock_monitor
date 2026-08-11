@@ -5,7 +5,7 @@ import {
   calculateRangeReferencePosition,
   comparePriceToBasis,
 } from '../dayRange';
-import { buildTooltip } from '../types';
+import { buildTooltip, formatChange } from '../types';
 import { parseSinaCnFields } from './sinaCn';
 
 function createCnFields(overrides: Record<number, string> = {}): string[] {
@@ -62,7 +62,17 @@ test('A 股最新价为 0 时按昨收显示并将涨跌归零', () => {
   assert.equal(data.high, 10.00);
   assert.equal(data.low, 10.00);
   assert.equal(data.usingPreviousClose, true);
-  assert.match(buildTooltip(data), /尚未开市或停牌/);
+  const tooltip = buildTooltip(data);
+  assert.match(tooltip, /尚未开市或停牌/);
+  assert.match(tooltip, /涨跌\t10\.000±0\.000 \(0\.00%\)/);
+});
+
+test('零涨跌额使用正负号占位，避免与基准价格粘连', () => {
+  assert.equal(formatChange(0, 3), '±0.000');
+  assert.equal(formatChange(-0, 3), '±0.000');
+  assert.equal(formatChange(0.0001, 3), '±0.000');
+  assert.equal(formatChange(0.001, 3), '+0.001');
+  assert.equal(formatChange(-0.001, 3), '-0.001');
 });
 
 test('日内价格位置按最低价和最高价计算并限制在区间内', () => {
