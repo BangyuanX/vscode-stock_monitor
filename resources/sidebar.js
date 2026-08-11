@@ -4,6 +4,19 @@ const stockTooltip = document.getElementById('stock-tooltip');
 const savedState = vscode.getState() || {};
 const collapsed = new Set(savedState.collapsed || []);
 let latestPayload = { state: 'loading', groups: [] };
+
+function applyPalette(payload) {
+  const colors = payload && payload.colors ? payload.colors : {};
+  const root = document.documentElement;
+  for (const [key, value] of [
+    ['--stock-rise-color', colors.rise],
+    ['--stock-fall-color', colors.fall],
+    ['--stock-flat-color', colors.flat],
+  ]) {
+    if (value) root.style.setProperty(key, value);
+    else root.style.removeProperty(key);
+  }
+}
 let draggedCode = '';
 let draggedCategory = '';
 let tooltipTimer;
@@ -382,6 +395,7 @@ function updateExistingRows(payload) {
 
 function render() {
   const payload = latestPayload;
+  applyPalette(payload);
   if (updateExistingRows(payload)) return;
 
   hideStockTooltip();

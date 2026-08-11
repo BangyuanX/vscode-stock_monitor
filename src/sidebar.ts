@@ -46,10 +46,17 @@ interface SidebarGroup {
   items: SidebarTicker[];
 }
 
+interface SidebarColors {
+  rise: string;
+  fall: string;
+  flat: string;
+}
+
 interface SidebarPayload {
   state: 'loading' | 'ready' | 'error';
   groups: SidebarGroup[];
   message?: string;
+  colors?: SidebarColors;
 }
 
 export interface SidebarActions {
@@ -210,7 +217,15 @@ export class SidebarManager implements vscode.WebviewViewProvider, vscode.Dispos
       const items = grouped.get(group.category);
       return items?.length ? [{ ...group, items }] : [];
     });
-    this.payload = { state: 'ready', groups };
+    this.payload = {
+      state: 'ready',
+      groups,
+      colors: {
+        rise: config.riseColor,
+        fall: config.fallColor,
+        flat: config.flatColor,
+      },
+    };
     void this.render();
   }
 
@@ -348,9 +363,9 @@ export function getWebviewHtml(
     }
     .ticker-row.drop-before { border-top-color: var(--vscode-focusBorder); }
     .ticker-row.drop-after { border-bottom-color: var(--vscode-focusBorder); }
-    .ticker-row[data-trend="rise"] { color: var(--vscode-charts-red); }
-    .ticker-row[data-trend="fall"] { color: var(--vscode-charts-green); }
-    .ticker-row[data-trend="flat"] { color: var(--vscode-descriptionForeground); }
+    .ticker-row[data-trend="rise"] { color: var(--stock-rise-color, #cc5555); }
+    .ticker-row[data-trend="fall"] { color: var(--stock-fall-color, #4a9e4a); }
+    .ticker-row[data-trend="flat"] { color: var(--stock-flat-color, var(--vscode-descriptionForeground)); }
     .ticker-row[data-trend="error"] { color: var(--vscode-list-warningForeground); }
     .name {
       min-width: 0;
@@ -499,8 +514,8 @@ export function getWebviewHtml(
       text-align: right;
       white-space: normal;
     }
-    .tooltip-change.rise .tooltip-value { color: var(--vscode-charts-red); }
-    .tooltip-change.fall .tooltip-value { color: var(--vscode-charts-green); }
+    .tooltip-change.rise .tooltip-value { color: var(--stock-rise-color, #cc5555); }
+    .tooltip-change.fall .tooltip-value { color: var(--stock-fall-color, #4a9e4a); }
     .tooltip-session {
       margin-bottom: 6px;
       color: var(--vscode-descriptionForeground);
@@ -540,8 +555,8 @@ export function getWebviewHtml(
       text-align: center;
     }
     .tooltip-range-labels .high { text-align: right; }
-    .tooltip-range-price.rise { color: var(--vscode-charts-red); }
-    .tooltip-range-price.fall { color: var(--vscode-charts-green); }
+    .tooltip-range-price.rise { color: var(--stock-rise-color, #cc5555); }
+    .tooltip-range-price.fall { color: var(--stock-fall-color, #4a9e4a); }
     .tooltip-range-track {
       position: relative;
       height: 5px;
@@ -611,6 +626,19 @@ export function getWebviewHtml(
     const savedState = vscode.getState() || {};
     const collapsed = new Set(savedState.collapsed || []);
     let latestPayload = { state: 'loading', groups: [] };
+
+    function applyPalette(payload) {
+      const colors = payload && payload.colors ? payload.colors : {};
+      const root = document.documentElement;
+      for (const [key, value] of [
+        ['--stock-rise-color', colors.rise],
+        ['--stock-fall-color', colors.fall],
+        ['--stock-flat-color', colors.flat],
+      ]) {
+        if (value) root.style.setProperty(key, value);
+        else root.style.removeProperty(key);
+      }
+    }
     let draggedCode = '';
     let draggedCategory = '';
     let tooltipTimer;
@@ -912,6 +940,7 @@ export function getWebviewHtml(
     }
 
     function render() {
+      applyPalette(latestPayload);
       hideStockTooltip();
       const payload = latestPayload;
       if (payload.state === 'loading') {
