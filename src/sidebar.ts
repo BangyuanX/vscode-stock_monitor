@@ -439,6 +439,8 @@ export function getWebviewHtml(
       font-weight: 650;
       white-space: nowrap;
     }
+    .tooltip-current.rise { color: var(--vscode-charts-red); }
+    .tooltip-current.fall { color: var(--vscode-charts-green); }
     .tooltip-code {
       flex: 0 0 auto;
       color: var(--vscode-descriptionForeground);
@@ -521,6 +523,8 @@ export function getWebviewHtml(
       text-align: center;
     }
     .tooltip-range-labels .high { text-align: right; }
+    .tooltip-day-range.rise .tooltip-range-price { color: var(--vscode-charts-red); }
+    .tooltip-day-range.fall .tooltip-range-price { color: var(--vscode-charts-green); }
     .tooltip-range-track {
       position: relative;
       height: 5px;
@@ -616,6 +620,13 @@ export function getWebviewHtml(
       stockTooltip.style.top = Math.max(6, top) + 'px';
     }
 
+    function getRowTrend(row) {
+      const trendElement = row.querySelector('.trend');
+      if (trendElement?.classList.contains('rise')) return 'rise';
+      if (trendElement?.classList.contains('fall')) return 'fall';
+      return 'flat';
+    }
+
     function appendDayRange(row) {
       if (!row?.dataset.range) return;
       let range;
@@ -623,19 +634,31 @@ export function getWebviewHtml(
       if (!range || !Number.isFinite(range.position)) return;
 
       const container = document.createElement('div');
-      container.className = 'tooltip-day-range';
+      container.className = 'tooltip-day-range ' + getRowTrend(row);
       container.setAttribute('aria-label', '日内价格位置');
 
       const labels = document.createElement('div');
       labels.className = 'tooltip-range-labels';
       const low = document.createElement('span');
-      low.textContent = '低 ' + range.low;
+      low.textContent = '低 ';
+      const lowPrice = document.createElement('span');
+      lowPrice.className = 'tooltip-range-price';
+      lowPrice.textContent = range.low;
+      low.appendChild(lowPrice);
       const current = document.createElement('span');
       current.className = 'current';
-      current.textContent = '现 ' + range.current;
+      current.textContent = '现 ';
+      const currentPrice = document.createElement('span');
+      currentPrice.className = 'tooltip-range-price';
+      currentPrice.textContent = range.current;
+      current.appendChild(currentPrice);
       const high = document.createElement('span');
       high.className = 'high';
-      high.textContent = '高 ' + range.high;
+      high.textContent = '高 ';
+      const highPrice = document.createElement('span');
+      highPrice.className = 'tooltip-range-price';
+      highPrice.textContent = range.high;
+      high.appendChild(highPrice);
       labels.append(low, current, high);
 
       const track = document.createElement('div');
@@ -665,10 +688,7 @@ export function getWebviewHtml(
       stockTooltip.replaceChildren();
       let codeValue = row.dataset.code || '';
       let timeValue = '';
-      const trendElement = row.querySelector('.trend');
-      const trend = trendElement?.classList.contains('rise')
-        ? 'rise'
-        : trendElement?.classList.contains('fall') ? 'fall' : 'flat';
+      const trend = getRowTrend(row);
 
       row.dataset.tooltip.split('\n').forEach((line, index) => {
         if (index === 0) {
@@ -681,7 +701,7 @@ export function getWebviewHtml(
           if (match) codeValue = match[2];
           header.appendChild(title);
           const current = document.createElement('span');
-          current.className = 'tooltip-current';
+          current.className = 'tooltip-current ' + trend;
           current.textContent = row.querySelector('.current-price')?.textContent || '—';
           header.appendChild(current);
           stockTooltip.appendChild(header);

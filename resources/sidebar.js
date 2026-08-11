@@ -50,6 +50,13 @@ function positionTooltip(x, y) {
   stockTooltip.style.top = Math.max(6, top) + 'px';
 }
 
+function getRowTrend(row) {
+  const trendElement = row.querySelector('.trend');
+  if (trendElement?.classList.contains('rise')) return 'rise';
+  if (trendElement?.classList.contains('fall')) return 'fall';
+  return 'flat';
+}
+
 function appendDayRange(row) {
   if (!row?.dataset.range) return;
   let range;
@@ -57,19 +64,31 @@ function appendDayRange(row) {
   if (!range || !Number.isFinite(range.position)) return;
 
   const container = document.createElement('div');
-  container.className = 'tooltip-day-range';
+  container.className = 'tooltip-day-range ' + getRowTrend(row);
   container.setAttribute('aria-label', '日内价格位置');
 
   const labels = document.createElement('div');
   labels.className = 'tooltip-range-labels';
   const low = document.createElement('span');
-  low.textContent = '低 ' + range.low;
+  low.textContent = '低 ';
+  const lowPrice = document.createElement('span');
+  lowPrice.className = 'tooltip-range-price';
+  lowPrice.textContent = range.low;
+  low.appendChild(lowPrice);
   const current = document.createElement('span');
   current.className = 'current';
-  current.textContent = '现 ' + range.current;
+  current.textContent = '现 ';
+  const currentPrice = document.createElement('span');
+  currentPrice.className = 'tooltip-range-price';
+  currentPrice.textContent = range.current;
+  current.appendChild(currentPrice);
   const high = document.createElement('span');
   high.className = 'high';
-  high.textContent = '高 ' + range.high;
+  high.textContent = '高 ';
+  const highPrice = document.createElement('span');
+  highPrice.className = 'tooltip-range-price';
+  highPrice.textContent = range.high;
+  high.appendChild(highPrice);
   labels.append(low, current, high);
 
   const track = document.createElement('div');
@@ -99,10 +118,7 @@ function showStockTooltip(row, x, y) {
   stockTooltip.replaceChildren();
   let codeValue = row.dataset.code || '';
   let timeValue = '';
-  const trendElement = row.querySelector('.trend');
-  const trend = trendElement?.classList.contains('rise')
-    ? 'rise'
-    : trendElement?.classList.contains('fall') ? 'fall' : 'flat';
+  const trend = getRowTrend(row);
 
   row.dataset.tooltip.split('\n').forEach((line, index) => {
     if (index === 0) {
@@ -115,7 +131,7 @@ function showStockTooltip(row, x, y) {
       if (match) codeValue = match[2];
       header.appendChild(title);
       const current = document.createElement('span');
-      current.className = 'tooltip-current';
+      current.className = 'tooltip-current ' + trend;
       current.textContent = row.querySelector('.current-price')?.textContent || '—';
       header.appendChild(current);
       stockTooltip.appendChild(header);
