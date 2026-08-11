@@ -1,7 +1,16 @@
 import * as vscode from 'vscode';
-import { AppConfig, StockData, buildTooltip, formatTicker } from './types';
+import { AppConfig, StockData, buildTooltip, formatPrice, formatTicker } from './types';
 import { MARKET_GROUPS, MarketCategory, classifyMarket } from './market';
 import { getEffectiveStatusBarCodes, getSidebarOrderedCodes } from './config';
+import { calculateDayRangePosition } from './dayRange';
+
+interface SidebarDayRange {
+  current: string;
+  low: string;
+  high: string;
+  position: number;
+  flat: boolean;
+}
 
 interface SidebarTicker {
   code: string;
@@ -12,6 +21,7 @@ interface SidebarTicker {
   delayed: boolean;
   pinned: boolean;
   tooltip: string;
+  dayRange?: SidebarDayRange;
 }
 
 interface SidebarGroup {
@@ -125,6 +135,12 @@ export class SidebarManager implements vscode.WebviewViewProvider, vscode.Dispos
       const precision = configuredPrecision >= 0 ? configuredPrecision : undefined;
       const scale = config.priceScale[code] || 1;
       const display = formatTicker(data, precision, scale);
+      const current = data.price * scale;
+      const low = data.low * scale;
+      const high = data.high * scale;
+      const rangePosition = data.error || current <= 0 || low <= 0 || high <= 0
+        ? undefined
+        : calculateDayRangePosition(current, low, high);
       items.push({
         code,
         name: data.name || code,
@@ -142,6 +158,15 @@ export class SidebarManager implements vscode.WebviewViewProvider, vscode.Dispos
         tooltip: data.error
           ? `${code}: ${data.error}\n下次刷新自动重试`
           : buildTooltip(data, precision, scale),
+        dayRange: rangePosition === undefined
+          ? undefined
+          : {
+              current: formatPrice(current, precision),
+              low: formatPrice(low, precision),
+              high: formatPrice(high, precision),
+              position: rangePosition,
+              flat: high === low,
+            },
       });
       grouped.set(category, items);
     }
@@ -393,26 +418,146 @@ export function getWebviewHtml(
       overflow-wrap: anywhere;
       pointer-events: none;
     }
-    .tooltip-title { font-weight: 600; }
+    .tooltip-header {
+      display: flex;
+      min-width: 220px;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .tooltip-title {
+      min-width: 0;
+      overflow: hidden;
+      font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tooltip-current {
+      flex: 0 0 auto;
+      color: var(--vscode-foreground);
+      font-size: 1.12em;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .tooltip-code {
+      flex: 0 0 auto;
+      color: var(--vscode-descriptionForeground);
+      white-space: nowrap;
+    }
     .tooltip-divider {
       height: 1px;
-      margin: 5px 0;
+      margin: 6px 0;
       background: var(--vscode-editorHoverWidget-border, var(--vscode-widget-border));
     }
-    .tooltip-message { margin: 3px 0; white-space: normal; }
+    .tooltip-message {
+      margin: 5px 0;
+      padding: 4px 6px;
+      border-left: 2px solid var(--vscode-list-warningForeground);
+      border-radius: 2px;
+      color: var(--vscode-descriptionForeground);
+      background: var(--vscode-textBlockQuote-background, transparent);
+      white-space: normal;
+    }
     .tooltip-row {
-      display: grid;
-      grid-template-columns: 4.5em minmax(0, 1fr);
-      column-gap: 9px;
+      display: flex;
       align-items: baseline;
-      min-height: 1.35em;
+      justify-content: space-between;
+      gap: 12px;
     }
     .tooltip-label {
       color: var(--vscode-descriptionForeground);
-      text-align: right;
       white-space: nowrap;
     }
     .tooltip-value { white-space: pre; }
+    .tooltip-change {
+      margin: 1px 0 6px;
+      padding: 6px 8px;
+      border-radius: 4px;
+      background: var(--vscode-editorWidget-background, var(--vscode-textBlockQuote-background));
+    }
+    .tooltip-change .tooltip-value {
+      font-weight: 600;
+      text-align: right;
+      white-space: normal;
+    }
+    .tooltip-change.rise .tooltip-value { color: var(--vscode-charts-red); }
+    .tooltip-change.fall .tooltip-value { color: var(--vscode-charts-green); }
+    .tooltip-session {
+      margin-bottom: 6px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .tooltip-session .tooltip-value {
+      padding: 1px 6px;
+      border-radius: 999px;
+      color: var(--vscode-badge-foreground);
+      background: var(--vscode-badge-background);
+      font-size: .9em;
+    }
+    .tooltip-premium {
+      margin-bottom: 2px;
+      padding: 2px 8px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .tooltip-premium .tooltip-value {
+      color: var(--vscode-foreground);
+      font-weight: 500;
+    }
+    .tooltip-day-range {
+      margin: 7px 1px 1px;
+      padding-top: 7px;
+      border-top: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-widget-border));
+    }
+    .tooltip-range-labels {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 8px;
+      margin-bottom: 5px;
+      color: var(--vscode-descriptionForeground);
+      font-size: .92em;
+      white-space: nowrap;
+    }
+    .tooltip-range-labels .current {
+      color: var(--vscode-foreground);
+      text-align: center;
+    }
+    .tooltip-range-labels .high { text-align: right; }
+    .tooltip-range-track {
+      position: relative;
+      height: 5px;
+      border-radius: 999px;
+      background: var(--vscode-editorWidget-border, var(--vscode-widget-border));
+    }
+    .tooltip-range-fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      border-radius: inherit;
+      background: var(--vscode-charts-blue, var(--vscode-progressBar-background));
+      opacity: .62;
+    }
+    .tooltip-range-marker {
+      position: absolute;
+      top: 50%;
+      width: 9px;
+      height: 9px;
+      border: 2px solid var(--vscode-editorHoverWidget-background, var(--vscode-editor-background));
+      border-radius: 50%;
+      background: var(--vscode-charts-blue, var(--vscode-progressBar-background));
+      box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+      transform: translate(-50%, -50%);
+    }
+    .tooltip-range-caption {
+      margin-top: 4px;
+      color: var(--vscode-descriptionForeground);
+      font-size: .88em;
+      text-align: center;
+    }
+    .tooltip-footer {
+      margin-top: 7px;
+      padding-top: 5px;
+      border-top: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-widget-border));
+      color: var(--vscode-descriptionForeground);
+      font-size: .86em;
+    }
   </style>
 </head>
 <body>
@@ -471,13 +616,77 @@ export function getWebviewHtml(
       stockTooltip.style.top = Math.max(6, top) + 'px';
     }
 
+    function appendDayRange(row) {
+      if (!row?.dataset.range) return;
+      let range;
+      try { range = JSON.parse(row.dataset.range); } catch { return; }
+      if (!range || !Number.isFinite(range.position)) return;
+
+      const container = document.createElement('div');
+      container.className = 'tooltip-day-range';
+      container.setAttribute('aria-label', '日内价格位置');
+
+      const labels = document.createElement('div');
+      labels.className = 'tooltip-range-labels';
+      const low = document.createElement('span');
+      low.textContent = '低 ' + range.low;
+      const current = document.createElement('span');
+      current.className = 'current';
+      current.textContent = '现 ' + range.current;
+      const high = document.createElement('span');
+      high.className = 'high';
+      high.textContent = '高 ' + range.high;
+      labels.append(low, current, high);
+
+      const track = document.createElement('div');
+      track.className = 'tooltip-range-track';
+      const fill = document.createElement('div');
+      fill.className = 'tooltip-range-fill';
+      fill.style.width = range.position + '%';
+      const marker = document.createElement('div');
+      marker.className = 'tooltip-range-marker';
+      marker.style.left = range.position + '%';
+      track.append(fill, marker);
+
+      const caption = document.createElement('div');
+      caption.className = 'tooltip-range-caption';
+      caption.textContent = range.flat
+        ? '暂无日内振幅'
+        : '日内位置 ' + Math.round(range.position) + '%';
+      container.append(labels, track, caption);
+      stockTooltip.appendChild(container);
+    }
+
     function showStockTooltip(row, x, y) {
       if (!row?.dataset.tooltip) return;
       tooltipRow = row;
       tooltipX = x;
       tooltipY = y;
       stockTooltip.replaceChildren();
+      let codeValue = row.dataset.code || '';
+      let timeValue = '';
+      const trendElement = row.querySelector('.trend');
+      const trend = trendElement?.classList.contains('rise')
+        ? 'rise'
+        : trendElement?.classList.contains('fall') ? 'fall' : 'flat';
+
       row.dataset.tooltip.split('\n').forEach((line, index) => {
+        if (index === 0) {
+          const header = document.createElement('div');
+          header.className = 'tooltip-header';
+          const title = document.createElement('span');
+          title.className = 'tooltip-title';
+          const match = line.match(/^(.*)（([^（）]+)）$/);
+          title.textContent = match ? match[1] : line;
+          if (match) codeValue = match[2];
+          header.appendChild(title);
+          const current = document.createElement('span');
+          current.className = 'tooltip-current';
+          current.textContent = row.querySelector('.current-price')?.textContent || '—';
+          header.appendChild(current);
+          stockTooltip.appendChild(header);
+          return;
+        }
         if (line === '---') {
           const divider = document.createElement('div');
           divider.className = 'tooltip-divider';
@@ -486,23 +695,52 @@ export function getWebviewHtml(
         }
         const tabIndex = line.indexOf('\t');
         if (tabIndex >= 0) {
+          const labelText = line.slice(0, tabIndex);
+          const valueText = line.slice(tabIndex + 1);
+          if (labelText === '时间') {
+            timeValue = valueText;
+            return;
+          }
           const item = document.createElement('div');
           item.className = 'tooltip-row';
           const label = document.createElement('span');
           label.className = 'tooltip-label';
-          label.textContent = line.slice(0, tabIndex);
+          label.textContent = labelText;
           const value = document.createElement('span');
           value.className = 'tooltip-value';
-          value.textContent = line.slice(tabIndex + 1);
+          value.textContent = valueText;
           item.append(label, value);
-          stockTooltip.appendChild(item);
+          if (labelText === '涨跌') {
+            item.classList.add('tooltip-change', trend);
+            stockTooltip.appendChild(item);
+          } else if (labelText === '阶段') {
+            item.classList.add('tooltip-session');
+            stockTooltip.appendChild(item);
+          } else if (labelText === '溢价') {
+            item.classList.add('tooltip-premium');
+            stockTooltip.appendChild(item);
+          } else {
+            stockTooltip.appendChild(item);
+          }
           return;
         }
         const message = document.createElement('div');
-        message.className = index === 0 ? 'tooltip-title' : 'tooltip-message';
+        message.className = 'tooltip-message';
         message.textContent = line;
         stockTooltip.appendChild(message);
       });
+      appendDayRange(row);
+      if (codeValue || timeValue) {
+        const footer = document.createElement('div');
+        footer.className = 'tooltip-row tooltip-footer';
+        const code = document.createElement('span');
+        code.className = 'tooltip-code';
+        code.textContent = codeValue;
+        const time = document.createElement('span');
+        time.textContent = timeValue;
+        footer.append(code, time);
+        stockTooltip.appendChild(footer);
+      }
       stockTooltip.hidden = false;
       positionTooltip(x, y);
     }
@@ -629,7 +867,7 @@ export function getWebviewHtml(
         html += '<div class="group-items">';
         for (const item of group.items) {
           const code = escapeHtml(item.code);
-          html += '<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="' + code + '" data-category="' + escapeHtml(group.category) + '" data-tooltip="' + escapeHtml(item.tooltip) + '">';
+          html += '<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="' + code + '" data-category="' + escapeHtml(group.category) + '" data-tooltip="' + escapeHtml(item.tooltip) + '" data-range="' + escapeHtml(item.dayRange ? JSON.stringify(item.dayRange) : '') + '">';
           html += '<span class="trend ' + item.trend + '">' + trendSymbol(item.trend) + '</span>';
           html += '<span class="name"><span class="name-text">' + escapeHtml(item.name) + '</span>' + (item.delayed ? '<span class="delay-badge" title="延迟行情（通常至少延迟约 15 分钟）">D</span>' : '') + '</span>';
           html += '<button class="price" data-code="' + code + '" title="设置小数位数"><span class="current-price">' + escapeHtml(item.price) + '</span><span class="percent ' + item.trend + '">' + (item.percent ? '(' + escapeHtml(item.percent) + ')' : '') + '</span></button>';
@@ -696,7 +934,7 @@ function renderPayloadHtml(payload: SidebarPayload): string {
     html += `<section class="group"><button class="group-header" data-category="${escapeHtml(group.category)}"><span class="chevron">${chevronSvg}</span><span class="group-label">${escapeHtml(group.label)}</span></button><div class="group-items">`;
     for (const item of group.items) {
       const code = escapeHtml(item.code);
-      html += `<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="${code}" data-category="${escapeHtml(group.category)}" data-tooltip="${escapeHtml(item.tooltip)}">`;
+      html += `<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="${code}" data-category="${escapeHtml(group.category)}" data-tooltip="${escapeHtml(item.tooltip)}" data-range="${escapeHtml(item.dayRange ? JSON.stringify(item.dayRange) : '')}">`;
       html += `<span class="trend ${item.trend}">${trendSymbol(item.trend)}</span>`;
       html += `<span class="name"><span class="name-text">${escapeHtml(item.name)}</span>${item.delayed ? '<span class="delay-badge" title="延迟行情（通常至少延迟约 15 分钟）">D</span>' : ''}</span>`;
       html += `<button class="price" data-code="${code}" title="设置小数位数"><span class="current-price">${escapeHtml(item.price)}</span><span class="percent ${item.trend}">${item.percent ? `(${escapeHtml(item.percent)})` : ''}</span></button>`;

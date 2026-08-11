@@ -232,6 +232,7 @@ function parseSinaUsFields(code: string, fields: string[]): StockData | null {
   const session = getEtSession();
   let price: number, change: number, changePercent: number;
   let effectiveYestclose: number;
+  let changeBasis: StockData['changeBasis'] = 'previousClose';
 
   if (session === 'REGULAR') {
     price = regularPrice;
@@ -248,6 +249,7 @@ function parseSinaUsFields(code: string, fields: string[]): StockData | null {
     change = !isNaN(afterChange) ? afterChange : price - yestclose;
     changePercent = !isNaN(afterChangePercent) ? afterChangePercent : 0;
     effectiveYestclose = regularPrice;
+    changeBasis = 'regularClose';
   } else if (session === 'OVERNIGHT' && !isNaN(afterPrice)) {
     price = afterPrice;
     change = !isNaN(afterChange) ? afterChange : price - yestclose;
@@ -280,6 +282,7 @@ function parseSinaUsFields(code: string, fields: string[]): StockData | null {
     low,
     open,
     yestclose: effectiveYestclose,
+    changeBasis,
     time: fields[24] || new Date().toLocaleTimeString('zh-CN', { hour12: false }),
     marketState: session,
   };
@@ -546,6 +549,7 @@ async function fetchFromBinance(symbols: string[]): Promise<Map<string, StockDat
         low,
         open: openPrice,
         yestclose: yestclose > 0 ? yestclose : price,
+        changeBasis: kline && kline.open > 0 ? 'open' : 'rolling24h',
         time: formatCstDateTime(
           typeof ticker.closeTime === 'number' && Number.isFinite(ticker.closeTime)
             ? ticker.closeTime

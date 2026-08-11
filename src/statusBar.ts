@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { StockData, formatTicker, applyFormat, buildTooltip } from './types';
+import { StockData, formatTicker, applyFormat } from './types';
 
 /**
  * 状态栏管理器
@@ -29,7 +29,6 @@ export class StatusBarManager {
         100,
       );
       this.loadingItem.text = '$(loading~spin) StockBar';
-      this.loadingItem.tooltip = '正在获取行情数据...';
       this.loadingItem.show();
     }
   }
@@ -95,9 +94,13 @@ export class StatusBarManager {
       // 获取失败的品种显示错误标记
       if (data.error) {
         const errorText = `⛔${data.code}`;
-        const errorTooltip = `${data.code}: ${data.error}\n下次刷新自动重试`;
         activeCodes.add(data.code);
-        this.createOrUpdateItem(data.code, errorText, errorTooltip, this.flatColor || '#888888', i);
+        this.createOrUpdateItem(
+          data.code,
+          errorText,
+          this.flatColor || '#888888',
+          i,
+        );
         continue;
       }
 
@@ -108,11 +111,10 @@ export class StatusBarManager {
       const display = formatTicker(data, precision, scale);
       const formattedText = applyFormat(template, display);
       const text = data.stale ? `$(warning) ${formattedText}` : formattedText;
-      const tooltip = buildTooltip(data, precision, scale);
       const color = this.getColor(data.changePercent);
 
       activeCodes.add(data.code);
-      this.createOrUpdateItem(data.code, text, tooltip, color, i);
+      this.createOrUpdateItem(data.code, text, color, i);
     }
 
     // 移除不再显示的品种
@@ -153,11 +155,11 @@ export class StatusBarManager {
   private createOrUpdateItem(
     code: string,
     text: string,
-    tooltip: string,
     color: string,
     priorityOffset: number,
   ): void {
     let item = this.items.get(code);
+    let created = false;
     if (!item) {
       // 左对齐，优先级从高到低依次排列
       item = vscode.window.createStatusBarItem(
@@ -166,12 +168,14 @@ export class StatusBarManager {
       );
       item.command = 'stock-bar.refresh';
       this.items.set(code, item);
+      created = true;
     }
 
-    item.text = text;
-    item.tooltip = tooltip;
-    item.color = color || undefined;
-    item.show();
+    // 状态栏只显示实时行情，不再提供原生 tooltip；详细行情统一在侧边栏查看。
+    if (item.text !== text) item.text = text;
+    const nextColor = color || undefined;
+    if (item.color !== nextColor) item.color = nextColor;
+    if (created) item.show();
   }
 
   /**

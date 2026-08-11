@@ -1,5 +1,6 @@
 /** 交易时段 */
 export type MarketState = 'PRE' | 'REGULAR' | 'POST' | 'OVERNIGHT' | 'CLOSED';
+export type ChangeBasis = 'previousClose' | 'open' | 'regularClose' | 'rolling24h';
 
 /** 单个品种的行情数据（统一格式，无论来源） */
 export interface StockData {
@@ -24,6 +25,8 @@ export interface StockData {
   stale?: boolean;
   /** 数据源尚无有效最新价（如未开市或停牌），当前价暂按昨收显示 */
   usingPreviousClose?: boolean;
+  /** 涨跌额与涨跌幅的比较基准；未指定时默认为昨收 */
+  changeBasis?: ChangeBasis;
 }
 
 /** 格式化后的展示数据 */
@@ -90,17 +93,20 @@ export function getIcon(change: number): string {
 }
 
 /** 格式化数值（自动处理小数位数，可选覆盖） */
+function resolvePricePrecision(price: number, precision?: number): number {
+  if (precision !== undefined) return precision;
+  if (price >= 100) return 2;
+  if (price >= 1) return 3;
+  return 4;
+}
+
 export function formatPrice(price: number, precision?: number): string {
-  if (precision !== undefined) return price.toFixed(precision);
-  // 自动判断：高价（>100）2位，中价（>1）3位，低价（<1）4位
-  if (price >= 100) return price.toFixed(2);
-  if (price >= 1) return price.toFixed(3);
-  return price.toFixed(4);
+  return price.toFixed(resolvePricePrecision(price, precision));
 }
 
 /** 格式化涨跌额，带正负号 */
-export function formatChange(change: number): string {
-  return (change > 0 ? '+' : '') + change.toFixed(2);
+export function formatChange(change: number, precision = 2): string {
+  return (change > 0 ? '+' : '') + change.toFixed(precision);
 }
 
 /** 格式化涨跌幅，带正负号和百分号 */
@@ -173,13 +179,12 @@ function formatCstTime(raw?: string): string {
 /** 构建悬停提示文本 */
 export function buildTooltip(data: StockData, precision?: number, scale?: number): string {
   const multiplier = scale || 1;
-  const price = data.price * multiplier;
   const change = data.change * multiplier;
-  const high = data.high * multiplier;
-  const low = data.low * multiplier;
-  const open = data.open * multiplier;
-  const yestclose = data.yestclose * multiplier;
-  const icon = getIcon(data.changePercent);
+  const changeBasis = data.changeBasis ?? 'previousClose';
+  const basisPrice = changeBasis === 'open' ? data.open : data.yestclose;
+  const displayPrice = data.price * multiplier;
+  const displayPrecision = resolvePricePrecision(displayPrice, precision);
+  const changeSummary = `${formatPrice(basisPrice * multiplier, displayPrecision)}${formatChange(change, displayPrecision)} (${formatPercent(data.changePercent)})`;
   const lines = [
     `${data.name}（${data.code}）`,
     `---`,
@@ -200,27 +205,16 @@ export function buildTooltip(data: StockData, precision?: number, scale?: number
   if (data.marketState && data.marketState !== 'REGULAR') {
     const stateLabel = data.marketState === 'PRE' ? '盘前' : data.marketState === 'POST' ? '盘后' : '夜盘';
     lines.push(`阶段\t${stateLabel}`);
-    lines.push(`现价\t${icon} ${formatPrice(price, precision)}`);
-    lines.push(`涨跌\t${formatChange(change)}  (${formatPercent(data.changePercent)})`);
-    lines.push(`昨收\t${formatPrice(yestclose, precision)}`);
-  } else {
-    lines.push(`现价\t${icon} ${formatPrice(price, precision)}`);
-    lines.push(`涨跌\t${formatChange(change)}  (${formatPercent(data.changePercent)})`);
-    lines.push(`今开\t${formatPrice(open, precision)}`);
-    lines.push(`昨收\t${formatPrice(yestclose, precision)}`);
-    lines.push(`最高\t${formatPrice(high, precision)}`);
-    lines.push(`最低\t${formatPrice(low, precision)}`);
   }
-
-  lines.push(`时间\t${formatCstTime(data.time)}`);
+  lines.push(`涨跌\t${changeSummary}`);
 
   // ETF 溢价率（需配置 premiumCodes 从交易所获取 IOPV）
   if (data.iopv && data.iopv > 0) {
     const premium = ((data.price - data.iopv) / data.iopv) * 100;
-    const premiumIcon = premium > 0 ? '📈' : premium < 0 ? '📉' : '➡️';
-    lines.push(`溢价\t${premiumIcon} ${formatPercent(premium)}`);
-    lines.push(`IOPV\t${formatPrice(data.iopv * multiplier, precision)}`);
+    lines.push(`溢价\t${formatPercent(premium)} (${formatPrice(data.iopv * multiplier, precision)})`);
   }
+
+  lines.push(`时间\t${formatCstTime(data.time)}`);
 
   return lines.join('\n');
 }

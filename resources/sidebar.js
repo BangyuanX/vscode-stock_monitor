@@ -50,13 +50,77 @@ function positionTooltip(x, y) {
   stockTooltip.style.top = Math.max(6, top) + 'px';
 }
 
+function appendDayRange(row) {
+  if (!row?.dataset.range) return;
+  let range;
+  try { range = JSON.parse(row.dataset.range); } catch { return; }
+  if (!range || !Number.isFinite(range.position)) return;
+
+  const container = document.createElement('div');
+  container.className = 'tooltip-day-range';
+  container.setAttribute('aria-label', '日内价格位置');
+
+  const labels = document.createElement('div');
+  labels.className = 'tooltip-range-labels';
+  const low = document.createElement('span');
+  low.textContent = '低 ' + range.low;
+  const current = document.createElement('span');
+  current.className = 'current';
+  current.textContent = '现 ' + range.current;
+  const high = document.createElement('span');
+  high.className = 'high';
+  high.textContent = '高 ' + range.high;
+  labels.append(low, current, high);
+
+  const track = document.createElement('div');
+  track.className = 'tooltip-range-track';
+  const fill = document.createElement('div');
+  fill.className = 'tooltip-range-fill';
+  fill.style.width = range.position + '%';
+  const marker = document.createElement('div');
+  marker.className = 'tooltip-range-marker';
+  marker.style.left = range.position + '%';
+  track.append(fill, marker);
+
+  const caption = document.createElement('div');
+  caption.className = 'tooltip-range-caption';
+  caption.textContent = range.flat
+    ? '暂无日内振幅'
+    : '日内位置 ' + Math.round(range.position) + '%';
+  container.append(labels, track, caption);
+  stockTooltip.appendChild(container);
+}
+
 function showStockTooltip(row, x, y) {
   if (!row?.dataset.tooltip) return;
   tooltipRow = row;
   tooltipX = x;
   tooltipY = y;
   stockTooltip.replaceChildren();
+  let codeValue = row.dataset.code || '';
+  let timeValue = '';
+  const trendElement = row.querySelector('.trend');
+  const trend = trendElement?.classList.contains('rise')
+    ? 'rise'
+    : trendElement?.classList.contains('fall') ? 'fall' : 'flat';
+
   row.dataset.tooltip.split('\n').forEach((line, index) => {
+    if (index === 0) {
+      const header = document.createElement('div');
+      header.className = 'tooltip-header';
+      const title = document.createElement('span');
+      title.className = 'tooltip-title';
+      const match = line.match(/^(.*)（([^（）]+)）$/);
+      title.textContent = match ? match[1] : line;
+      if (match) codeValue = match[2];
+      header.appendChild(title);
+      const current = document.createElement('span');
+      current.className = 'tooltip-current';
+      current.textContent = row.querySelector('.current-price')?.textContent || '—';
+      header.appendChild(current);
+      stockTooltip.appendChild(header);
+      return;
+    }
     if (line === '---') {
       const divider = document.createElement('div');
       divider.className = 'tooltip-divider';
@@ -65,23 +129,52 @@ function showStockTooltip(row, x, y) {
     }
     const tabIndex = line.indexOf('\t');
     if (tabIndex >= 0) {
+      const labelText = line.slice(0, tabIndex);
+      const valueText = line.slice(tabIndex + 1);
+      if (labelText === '时间') {
+        timeValue = valueText;
+        return;
+      }
       const item = document.createElement('div');
       item.className = 'tooltip-row';
       const label = document.createElement('span');
       label.className = 'tooltip-label';
-      label.textContent = line.slice(0, tabIndex);
+      label.textContent = labelText;
       const value = document.createElement('span');
       value.className = 'tooltip-value';
-      value.textContent = line.slice(tabIndex + 1);
+      value.textContent = valueText;
       item.append(label, value);
-      stockTooltip.appendChild(item);
+      if (labelText === '涨跌') {
+        item.classList.add('tooltip-change', trend);
+        stockTooltip.appendChild(item);
+      } else if (labelText === '阶段') {
+        item.classList.add('tooltip-session');
+        stockTooltip.appendChild(item);
+      } else if (labelText === '溢价') {
+        item.classList.add('tooltip-premium');
+        stockTooltip.appendChild(item);
+      } else {
+        stockTooltip.appendChild(item);
+      }
       return;
     }
     const message = document.createElement('div');
-    message.className = index === 0 ? 'tooltip-title' : 'tooltip-message';
+    message.className = 'tooltip-message';
     message.textContent = line;
     stockTooltip.appendChild(message);
   });
+  appendDayRange(row);
+  if (codeValue || timeValue) {
+    const footer = document.createElement('div');
+    footer.className = 'tooltip-row tooltip-footer';
+    const code = document.createElement('span');
+    code.className = 'tooltip-code';
+    code.textContent = codeValue;
+    const time = document.createElement('span');
+    time.textContent = timeValue;
+    footer.append(code, time);
+    stockTooltip.appendChild(footer);
+  }
   stockTooltip.hidden = false;
   positionTooltip(x, y);
 }
@@ -211,8 +304,10 @@ function updateExistingRows(payload) {
     for (let itemIndex = 0; itemIndex < group.items.length; itemIndex++) {
       const item = group.items[itemIndex];
       const row = rows[itemIndex];
-      const tooltipChanged = row.dataset.tooltip !== item.tooltip;
+      const nextRange = item.dayRange ? JSON.stringify(item.dayRange) : '';
+      const tooltipChanged = row.dataset.tooltip !== item.tooltip || row.dataset.range !== nextRange;
       row.dataset.tooltip = item.tooltip;
+      row.dataset.range = nextRange;
 
       const trend = row.querySelector('.trend');
       if (trend) {
@@ -289,7 +384,7 @@ function render() {
     html += '<div class="group-items">';
     for (const item of group.items) {
       const code = escapeHtml(item.code);
-      html += '<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="' + code + '" data-category="' + escapeHtml(group.category) + '" data-tooltip="' + escapeHtml(item.tooltip) + '">';
+      html += '<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="' + code + '" data-category="' + escapeHtml(group.category) + '" data-tooltip="' + escapeHtml(item.tooltip) + '" data-range="' + escapeHtml(item.dayRange ? JSON.stringify(item.dayRange) : '') + '">';
       html += '<span class="trend ' + item.trend + '">' + trendSymbol(item.trend) + '</span>';
       html += '<span class="name"><span class="name-text">' + escapeHtml(item.name) + '</span>' + (item.delayed ? '<span class="delay-badge" title="延迟行情（通常至少延迟约 15 分钟）">D</span>' : '') + '</span>';
       html += '<button class="price" data-code="' + code + '" title="设置小数位数"><span class="current-price">' + escapeHtml(item.price) + '</span><span class="percent ' + item.trend + '">' + (item.percent ? '(' + escapeHtml(item.percent) + ')' : '') + '</span></button>';
