@@ -338,7 +338,7 @@ export function getWebviewHtml(
     .group.collapsed .group-items { display: none; }
     .ticker-row {
       display: grid;
-      grid-template-columns: 18px minmax(0, 1fr) max-content repeat(3, 20px);
+      grid-template-columns: minmax(0, 1fr) max-content repeat(3, 20px);
       align-items: center;
       column-gap: 3px;
       min-height: 23px;
@@ -348,16 +348,10 @@ export function getWebviewHtml(
     }
     .ticker-row.drop-before { border-top-color: var(--vscode-focusBorder); }
     .ticker-row.drop-after { border-bottom-color: var(--vscode-focusBorder); }
-    .trend {
-      width: 18px;
-      font-size: 18px;
-      line-height: 1;
-      text-align: center;
-    }
-    .trend.rise { color: var(--vscode-charts-red); }
-    .trend.fall { color: var(--vscode-charts-green); }
-    .trend.flat { color: var(--vscode-descriptionForeground); font-size: 16px; }
-    .trend.error { color: var(--vscode-list-warningForeground); font-size: 16px; }
+    .ticker-row[data-trend="rise"] { color: var(--vscode-charts-red); }
+    .ticker-row[data-trend="fall"] { color: var(--vscode-charts-green); }
+    .ticker-row[data-trend="flat"] { color: var(--vscode-descriptionForeground); }
+    .ticker-row[data-trend="error"] { color: var(--vscode-list-warningForeground); }
     .name {
       min-width: 0;
       display: flex;
@@ -385,7 +379,7 @@ export function getWebviewHtml(
       column-gap: 0;
       padding: 2px 0;
       border: 0;
-      color: var(--vscode-descriptionForeground);
+      color: inherit;
       background: transparent;
       font-family: var(--vscode-editor-font-family);
       font-size: inherit;
@@ -395,11 +389,7 @@ export function getWebviewHtml(
     }
     .current-price { text-align: right; }
     .percent { text-align: left; }
-    .percent { color: var(--vscode-descriptionForeground); }
-    .percent.rise { color: var(--vscode-charts-red); }
-    .percent.fall { color: var(--vscode-charts-green); }
-    .percent.error { color: var(--vscode-list-warningForeground); }
-    .price:hover { color: var(--vscode-foreground); }
+    .percent { color: inherit; }
     .icon-button, .delete-button, .drag-handle {
       display: inline-flex;
       width: 20px;
@@ -643,13 +633,6 @@ export function getWebviewHtml(
         .replaceAll("'", '&#39;');
     }
 
-    function trendSymbol(trend) {
-      if (trend === 'rise') return '↑';
-      if (trend === 'fall') return '↓';
-      if (trend === 'error') return '!';
-      return '−';
-    }
-
     function clearDropMarkers() {
       document.querySelectorAll('.drop-before,.drop-after').forEach(row => {
         row.classList.remove('drop-before', 'drop-after');
@@ -668,9 +651,8 @@ export function getWebviewHtml(
     }
 
     function getRowTrend(row) {
-      const trendElement = row.querySelector('.trend');
-      if (trendElement?.classList.contains('rise')) return 'rise';
-      if (trendElement?.classList.contains('fall')) return 'fall';
+      if (row.dataset.trend === 'rise') return 'rise';
+      if (row.dataset.trend === 'fall') return 'fall';
       return 'flat';
     }
 
@@ -952,8 +934,7 @@ export function getWebviewHtml(
         html += '<div class="group-items">';
         for (const item of group.items) {
           const code = escapeHtml(item.code);
-          html += '<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="' + code + '" data-category="' + escapeHtml(group.category) + '" data-tooltip="' + escapeHtml(item.tooltip) + '" data-range="' + escapeHtml(item.dayRange ? JSON.stringify(item.dayRange) : '') + '">';
-          html += '<span class="trend ' + item.trend + '">' + trendSymbol(item.trend) + '</span>';
+          html += '<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="' + code + '" data-category="' + escapeHtml(group.category) + '" data-trend="' + item.trend + '" data-tooltip="' + escapeHtml(item.tooltip) + '" data-range="' + escapeHtml(item.dayRange ? JSON.stringify(item.dayRange) : '') + '">';
           html += '<span class="name"><span class="name-text">' + escapeHtml(item.name) + '</span>' + (item.delayed ? '<span class="delay-badge" title="延迟行情（通常至少延迟约 15 分钟）">D</span>' : '') + '</span>';
           html += '<button class="price" data-code="' + code + '" title="设置小数位数"><span class="current-price">' + escapeHtml(item.price) + '</span><span class="percent ' + item.trend + '">' + (item.percent ? '(' + escapeHtml(item.percent) + ')' : '') + '</span></button>';
           html += '<button class="icon-button pin-button' + (item.pinned ? ' pinned' : '') + '" data-code="' + code + '" title="' + (item.pinned ? '状态栏：已显示（点击移除）' : '状态栏：未显示（点击固定）') + '" aria-label="切换状态栏显示" aria-pressed="' + item.pinned + '">' + (item.pinned ? pinOnSvg : pinOffSvg) + '</button>';
@@ -995,13 +976,6 @@ function escapeHtml(value: unknown): string {
     .replace(/'/g, '&#39;');
 }
 
-function trendSymbol(trend: SidebarTicker['trend']): string {
-  if (trend === 'rise') return '↑';
-  if (trend === 'fall') return '↓';
-  if (trend === 'error') return '!';
-  return '−';
-}
-
 function renderPayloadHtml(payload: SidebarPayload): string {
   if (payload.state === 'loading') {
     return '<div class="state">正在获取行情数据…</div>';
@@ -1019,8 +993,7 @@ function renderPayloadHtml(payload: SidebarPayload): string {
     html += `<section class="group"><button class="group-header" data-category="${escapeHtml(group.category)}"><span class="chevron">${chevronSvg}</span><span class="group-label">${escapeHtml(group.label)}</span></button><div class="group-items">`;
     for (const item of group.items) {
       const code = escapeHtml(item.code);
-      html += `<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="${code}" data-category="${escapeHtml(group.category)}" data-tooltip="${escapeHtml(item.tooltip)}" data-range="${escapeHtml(item.dayRange ? JSON.stringify(item.dayRange) : '')}">`;
-      html += `<span class="trend ${item.trend}">${trendSymbol(item.trend)}</span>`;
+      html += `<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="${code}" data-category="${escapeHtml(group.category)}" data-trend="${item.trend}" data-tooltip="${escapeHtml(item.tooltip)}" data-range="${escapeHtml(item.dayRange ? JSON.stringify(item.dayRange) : '')}">`;
       html += `<span class="name"><span class="name-text">${escapeHtml(item.name)}</span>${item.delayed ? '<span class="delay-badge" title="延迟行情（通常至少延迟约 15 分钟）">D</span>' : ''}</span>`;
       html += `<button class="price" data-code="${code}" title="设置小数位数"><span class="current-price">${escapeHtml(item.price)}</span><span class="percent ${item.trend}">${item.percent ? `(${escapeHtml(item.percent)})` : ''}</span></button>`;
       html += `<button class="icon-button pin-button${item.pinned ? ' pinned' : ''}" data-code="${code}" title="${item.pinned ? '状态栏：已显示（点击移除）' : '状态栏：未显示（点击固定）'}" aria-label="切换状态栏显示" aria-pressed="${item.pinned}">${item.pinned ? pinOnSvg : pinOffSvg}</button>`;

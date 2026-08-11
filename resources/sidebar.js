@@ -26,13 +26,6 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-function trendSymbol(trend) {
-  if (trend === 'rise') return '↑';
-  if (trend === 'fall') return '↓';
-  if (trend === 'error') return '!';
-  return '−';
-}
-
 function clearDropMarkers() {
   document.querySelectorAll('.drop-before,.drop-after').forEach(row => {
     row.classList.remove('drop-before', 'drop-after');
@@ -51,9 +44,8 @@ function positionTooltip(x, y) {
 }
 
 function getRowTrend(row) {
-  const trendElement = row.querySelector('.trend');
-  if (trendElement?.classList.contains('rise')) return 'rise';
-  if (trendElement?.classList.contains('fall')) return 'fall';
+  if (row.dataset.trend === 'rise') return 'rise';
+  if (row.dataset.trend === 'fall') return 'fall';
   return 'flat';
 }
 
@@ -342,12 +334,7 @@ function updateExistingRows(payload) {
       const tooltipChanged = row.dataset.tooltip !== item.tooltip || row.dataset.range !== nextRange;
       row.dataset.tooltip = item.tooltip;
       row.dataset.range = nextRange;
-
-      const trend = row.querySelector('.trend');
-      if (trend) {
-        trend.className = 'trend ' + item.trend;
-        trend.textContent = trendSymbol(item.trend);
-      }
+      row.dataset.trend = item.trend;
 
       const nameText = row.querySelector('.name-text');
       if (nameText) nameText.textContent = item.name;
@@ -418,8 +405,7 @@ function render() {
     html += '<div class="group-items">';
     for (const item of group.items) {
       const code = escapeHtml(item.code);
-      html += '<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="' + code + '" data-category="' + escapeHtml(group.category) + '" data-tooltip="' + escapeHtml(item.tooltip) + '" data-range="' + escapeHtml(item.dayRange ? JSON.stringify(item.dayRange) : '') + '">';
-      html += '<span class="trend ' + item.trend + '">' + trendSymbol(item.trend) + '</span>';
+      html += '<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="' + code + '" data-category="' + escapeHtml(group.category) + '" data-trend="' + item.trend + '" data-tooltip="' + escapeHtml(item.tooltip) + '" data-range="' + escapeHtml(item.dayRange ? JSON.stringify(item.dayRange) : '') + '">';
       html += '<span class="name"><span class="name-text">' + escapeHtml(item.name) + '</span>' + (item.delayed ? '<span class="delay-badge" title="延迟行情（通常至少延迟约 15 分钟）">D</span>' : '') + '</span>';
       html += '<button class="price" data-code="' + code + '" title="设置小数位数"><span class="current-price">' + escapeHtml(item.price) + '</span><span class="percent ' + item.trend + '">' + (item.percent ? '(' + escapeHtml(item.percent) + ')' : '') + '</span></button>';
       html += '<button class="icon-button pin-button' + (item.pinned ? ' pinned' : '') + '" data-code="' + code + '" title="' + (item.pinned ? '状态栏：已显示（点击移除）' : '状态栏：未显示（点击固定）') + '" aria-label="切换状态栏显示" aria-pressed="' + item.pinned + '">' + (item.pinned ? pinOnSvg : pinOffSvg) + '</button>';
