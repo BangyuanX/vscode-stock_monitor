@@ -113,7 +113,9 @@ export function formatChange(change: number, precision = 2): string {
 
 /** 格式化涨跌幅，带正负号和百分号 */
 export function formatPercent(percent: number): string {
-  return (percent > 0 ? '+' : '') + percent.toFixed(2) + '%';
+  const magnitude = Math.abs(percent).toFixed(2);
+  if (Number(magnitude) === 0) return `±${magnitude}%`;
+  return `${percent > 0 ? '+' : '-'}${magnitude}%`;
 }
 
 /** 格式化所有字段为显示对象 */
