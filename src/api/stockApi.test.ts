@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { calculateDayRangePosition } from '../dayRange';
+import { calculateDayRangePosition, comparePriceToBasis } from '../dayRange';
 import { buildTooltip } from '../types';
 import { parseSinaCnFields } from './sinaCn';
 
@@ -68,4 +68,12 @@ test('日内价格位置按最低价和最高价计算并限制在区间内', ()
   assert.equal(calculateDayRangePosition(10, 10, 10), 50);
   assert.equal(calculateDayRangePosition(Number.NaN, 10, 20), undefined);
   assert.equal(calculateDayRangePosition(15, 20, 10), undefined);
+});
+
+test('日内低、现、高价格分别相对涨跌基准判断颜色', () => {
+  assert.equal(comparePriceToBasis(24.80, 25), 'fall');
+  assert.equal(comparePriceToBasis(25.10, 25), 'rise');
+  assert.equal(comparePriceToBasis(25.30, 25), 'rise');
+  assert.equal(comparePriceToBasis(25, 25), 'flat');
+  assert.equal(comparePriceToBasis(25, 0), 'flat');
 });

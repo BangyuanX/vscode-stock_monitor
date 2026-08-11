@@ -2,12 +2,15 @@ import * as vscode from 'vscode';
 import { AppConfig, StockData, buildTooltip, formatPrice, formatTicker } from './types';
 import { MARKET_GROUPS, MarketCategory, classifyMarket } from './market';
 import { getEffectiveStatusBarCodes, getSidebarOrderedCodes } from './config';
-import { calculateDayRangePosition } from './dayRange';
+import { PriceTrend, calculateDayRangePosition, comparePriceToBasis } from './dayRange';
 
 interface SidebarDayRange {
   current: string;
   low: string;
   high: string;
+  currentTrend: PriceTrend;
+  lowTrend: PriceTrend;
+  highTrend: PriceTrend;
   position: number;
   flat: boolean;
 }
@@ -138,6 +141,7 @@ export class SidebarManager implements vscode.WebviewViewProvider, vscode.Dispos
       const current = data.price * scale;
       const low = data.low * scale;
       const high = data.high * scale;
+      const changeBasis = data.changeBasis === 'open' ? data.open : data.yestclose;
       const rangePosition = data.error || current <= 0 || low <= 0 || high <= 0
         ? undefined
         : calculateDayRangePosition(current, low, high);
@@ -164,6 +168,9 @@ export class SidebarManager implements vscode.WebviewViewProvider, vscode.Dispos
               current: formatPrice(current, precision),
               low: formatPrice(low, precision),
               high: formatPrice(high, precision),
+              currentTrend: comparePriceToBasis(data.price, changeBasis),
+              lowTrend: comparePriceToBasis(data.low, changeBasis),
+              highTrend: comparePriceToBasis(data.high, changeBasis),
               position: rangePosition,
               flat: high === low,
             },
@@ -523,8 +530,8 @@ export function getWebviewHtml(
       text-align: center;
     }
     .tooltip-range-labels .high { text-align: right; }
-    .tooltip-day-range.rise .tooltip-range-price { color: var(--vscode-charts-red); }
-    .tooltip-day-range.fall .tooltip-range-price { color: var(--vscode-charts-green); }
+    .tooltip-range-price.rise { color: var(--vscode-charts-red); }
+    .tooltip-range-price.fall { color: var(--vscode-charts-green); }
     .tooltip-range-track {
       position: relative;
       height: 5px;
@@ -634,7 +641,7 @@ export function getWebviewHtml(
       if (!range || !Number.isFinite(range.position)) return;
 
       const container = document.createElement('div');
-      container.className = 'tooltip-day-range ' + getRowTrend(row);
+      container.className = 'tooltip-day-range';
       container.setAttribute('aria-label', '日内价格位置');
 
       const labels = document.createElement('div');
@@ -642,21 +649,21 @@ export function getWebviewHtml(
       const low = document.createElement('span');
       low.textContent = '低 ';
       const lowPrice = document.createElement('span');
-      lowPrice.className = 'tooltip-range-price';
+      lowPrice.className = 'tooltip-range-price ' + (range.lowTrend || 'flat');
       lowPrice.textContent = range.low;
       low.appendChild(lowPrice);
       const current = document.createElement('span');
       current.className = 'current';
       current.textContent = '现 ';
       const currentPrice = document.createElement('span');
-      currentPrice.className = 'tooltip-range-price';
+      currentPrice.className = 'tooltip-range-price ' + (range.currentTrend || 'flat');
       currentPrice.textContent = range.current;
       current.appendChild(currentPrice);
       const high = document.createElement('span');
       high.className = 'high';
       high.textContent = '高 ';
       const highPrice = document.createElement('span');
-      highPrice.className = 'tooltip-range-price';
+      highPrice.className = 'tooltip-range-price ' + (range.highTrend || 'flat');
       highPrice.textContent = range.high;
       high.appendChild(highPrice);
       labels.append(low, current, high);

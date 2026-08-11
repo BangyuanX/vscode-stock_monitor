@@ -64,7 +64,7 @@ function appendDayRange(row) {
   if (!range || !Number.isFinite(range.position)) return;
 
   const container = document.createElement('div');
-  container.className = 'tooltip-day-range ' + getRowTrend(row);
+  container.className = 'tooltip-day-range';
   container.setAttribute('aria-label', '日内价格位置');
 
   const labels = document.createElement('div');
@@ -72,21 +72,21 @@ function appendDayRange(row) {
   const low = document.createElement('span');
   low.textContent = '低 ';
   const lowPrice = document.createElement('span');
-  lowPrice.className = 'tooltip-range-price';
+  lowPrice.className = 'tooltip-range-price ' + (range.lowTrend || 'flat');
   lowPrice.textContent = range.low;
   low.appendChild(lowPrice);
   const current = document.createElement('span');
   current.className = 'current';
   current.textContent = '现 ';
   const currentPrice = document.createElement('span');
-  currentPrice.className = 'tooltip-range-price';
+  currentPrice.className = 'tooltip-range-price ' + (range.currentTrend || 'flat');
   currentPrice.textContent = range.current;
   current.appendChild(currentPrice);
   const high = document.createElement('span');
   high.className = 'high';
   high.textContent = '高 ';
   const highPrice = document.createElement('span');
-  highPrice.className = 'tooltip-range-price';
+  highPrice.className = 'tooltip-range-price ' + (range.highTrend || 'flat');
   highPrice.textContent = range.high;
   high.appendChild(highPrice);
   labels.append(low, current, high);
