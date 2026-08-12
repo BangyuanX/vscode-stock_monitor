@@ -33,12 +33,12 @@ test('A 股正常行情保留最新价和涨跌额', () => {
   assert.equal(data.usingPreviousClose, false);
 
   const tooltip = buildTooltip(data);
-  assert.match(tooltip, /涨跌\t\+0\.200 \(\+2\.00%\)/);
+  assert.match(tooltip, /涨跌\t\+0\.200\(\+2\.00%\)/);
   assert.match(tooltip, /时间\t/);
   assert.doesNotMatch(tooltip, /现价\t|今开\t|昨收\t|最高\t|最低\t|更新\t/);
 
   const premiumTooltip = buildTooltip({ ...data, iopv: 10 });
-  assert.match(premiumTooltip, /溢价\t\+2\.00% \(10\.000\)/);
+  assert.match(premiumTooltip, /溢价\t10\.000\(\+2\.00%\)/);
   assert.doesNotMatch(premiumTooltip, /📈|IOPV\t/);
 
 });
@@ -62,7 +62,7 @@ test('A 股最新价为 0 时按昨收显示并将涨跌归零', () => {
   assert.equal(data.usingPreviousClose, true);
   const tooltip = buildTooltip(data);
   assert.match(tooltip, /尚未开市或停牌/);
-  assert.match(tooltip, /涨跌\t±0\.000 \(±0\.00%\)/);
+  assert.match(tooltip, /涨跌\t±0\.000\(±0\.00%\)/);
 });
 
 test('零涨跌额使用正负号占位，避免与基准价格粘连', () => {

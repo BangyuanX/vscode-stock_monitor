@@ -503,19 +503,31 @@ export function getWebviewHtml(
       white-space: nowrap;
     }
     .tooltip-value { white-space: pre; }
+    .tooltip-change,
+    .tooltip-premium {
+      display: grid;
+      grid-template-columns: 4ch minmax(0, 1fr);
+      align-items: baseline;
+      gap: 12px;
+    }
     .tooltip-change {
       margin: 1px 0 6px;
       padding: 6px 8px;
       border-radius: 4px;
       background: var(--vscode-editorWidget-background, var(--vscode-textBlockQuote-background));
     }
-    .tooltip-change .tooltip-value {
+    .tooltip-change .tooltip-value,
+    .tooltip-premium .tooltip-value {
       font-weight: 600;
       text-align: right;
       white-space: normal;
     }
-    .tooltip-change.rise .tooltip-value { color: var(--stock-rise-color, #cc5555); }
-    .tooltip-change.fall .tooltip-value { color: var(--stock-fall-color, #4a9e4a); }
+    .tooltip-change.rise .tooltip-value,
+    .tooltip-premium.rise .tooltip-value { color: var(--stock-rise-color, #cc5555); }
+    .tooltip-change.fall .tooltip-value,
+    .tooltip-premium.fall .tooltip-value { color: var(--stock-fall-color, #4a9e4a); }
+    .tooltip-change.flat .tooltip-value,
+    .tooltip-premium.flat .tooltip-value { color: var(--stock-flat-color, var(--vscode-foreground)); }
     .tooltip-session {
       margin-bottom: 6px;
       color: var(--vscode-descriptionForeground);
@@ -531,10 +543,6 @@ export function getWebviewHtml(
       margin-bottom: 2px;
       padding: 2px 8px;
       color: var(--vscode-descriptionForeground);
-    }
-    .tooltip-premium .tooltip-value {
-      color: var(--vscode-foreground);
-      font-weight: 500;
     }
     .tooltip-day-range {
       margin: 7px 1px 1px;
@@ -597,7 +605,7 @@ export function getWebviewHtml(
       height: 1.3em;
       margin-top: 5px;
       color: var(--vscode-charts-yellow, #cca700);
-      font-size: .86em;
+      font-size: .9em;
     }
     .tooltip-reference-label {
       position: absolute;
@@ -611,7 +619,7 @@ export function getWebviewHtml(
       padding-top: 5px;
       border-top: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-widget-border));
       color: var(--vscode-descriptionForeground);
-      font-size: .86em;
+      font-size: .9em;
       justify-content: flex-end;
     }
   </style>
@@ -681,6 +689,14 @@ export function getWebviewHtml(
     function getRowTrend(row) {
       if (row.dataset.trend === 'rise') return 'rise';
       if (row.dataset.trend === 'fall') return 'fall';
+      return 'flat';
+    }
+
+    function getSignedValueTrend(value) {
+      const normalized = String(value || '').trim();
+      const sign = normalized.match(/[+\-−±]/)?.[0];
+      if (sign === '+') return 'rise';
+      if (sign === '-' || sign === '−') return 'fall';
       return 'flat';
     }
 
@@ -815,7 +831,7 @@ export function getWebviewHtml(
             item.classList.add('tooltip-session');
             stockTooltip.appendChild(item);
           } else if (labelText === '溢价') {
-            item.classList.add('tooltip-premium');
+            item.classList.add('tooltip-premium', getSignedValueTrend(valueText));
             stockTooltip.appendChild(item);
           } else {
             stockTooltip.appendChild(item);

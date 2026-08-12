@@ -186,7 +186,7 @@ export function buildTooltip(data: StockData, precision?: number, scale?: number
   const change = data.change * multiplier;
   const displayPrice = data.price * multiplier;
   const displayPrecision = resolvePricePrecision(displayPrice, precision);
-  const changeSummary = `${formatChange(change, displayPrecision)} (${formatPercent(data.changePercent)})`;
+  const changeSummary = `${formatChange(change, displayPrecision)}(${formatPercent(data.changePercent)})`;
   const lines = [
     `${data.name}（${data.code}）`,
     `---`,
@@ -213,7 +213,7 @@ export function buildTooltip(data: StockData, precision?: number, scale?: number
   // ETF 溢价率（需配置 premiumCodes 从交易所获取 IOPV）
   if (data.iopv && data.iopv > 0) {
     const premium = ((data.price - data.iopv) / data.iopv) * 100;
-    lines.push(`溢价\t${formatPercent(premium)} (${formatPrice(data.iopv * multiplier, precision)})`);
+    lines.push(`溢价\t${formatPrice(data.iopv * multiplier, precision)}(${formatPercent(premium)})`);
   }
 
   lines.push(`时间\t${formatCstTime(data.time)}`);

@@ -62,6 +62,14 @@ function getRowTrend(row) {
   return 'flat';
 }
 
+function getSignedValueTrend(value) {
+  const normalized = String(value || '').trim();
+  const sign = normalized.match(/[+\-−±]/)?.[0];
+  if (sign === '+') return 'rise';
+  if (sign === '-' || sign === '−') return 'fall';
+  return 'flat';
+}
+
 function appendDayRange(row) {
   if (!row?.dataset.range) return;
   let range;
@@ -193,7 +201,7 @@ function showStockTooltip(row, x, y) {
         item.classList.add('tooltip-session');
         stockTooltip.appendChild(item);
       } else if (labelText === '溢价') {
-        item.classList.add('tooltip-premium');
+        item.classList.add('tooltip-premium', getSignedValueTrend(valueText));
         stockTooltip.appendChild(item);
       } else {
         stockTooltip.appendChild(item);
