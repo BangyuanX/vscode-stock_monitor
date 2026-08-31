@@ -39,7 +39,12 @@ test('A 股正常行情保留最新价和涨跌额', () => {
 
   const premiumTooltip = buildTooltip({ ...data, iopv: 10 });
   assert.match(premiumTooltip, /溢价\t10\.000\(\+2\.00%\)/);
+  assert.doesNotMatch(premiumTooltip, /IOPV 暂时无法刷新/);
   assert.doesNotMatch(premiumTooltip, /📈|IOPV\t/);
+
+  const stalePremiumTooltip = buildTooltip({ ...data, iopv: 10, iopvStale: true });
+  assert.match(stalePremiumTooltip, /溢价\t10\.000\(\+2\.00%\)/);
+  assert.match(stalePremiumTooltip, /IOPV 暂时无法刷新，溢价率按最近一次成功数据计算/);
 
 });
 

@@ -19,6 +19,8 @@ export interface StockData {
   error?: string;
   /** ETF 实时参考净值（IOPV），用于计算溢价率 */
   iopv?: number;
+  /** 本轮 IOPV 获取失败，当前使用最近一次成功值 */
+  iopvStale?: boolean;
   /** 数据源明确提供的是延迟行情 */
   delayed?: boolean;
   /** 本轮刷新失败，当前显示最近一次成功获取的缓存行情 */
@@ -214,6 +216,9 @@ export function buildTooltip(data: StockData, precision?: number, scale?: number
   if (data.iopv && data.iopv > 0) {
     const premium = ((data.price - data.iopv) / data.iopv) * 100;
     lines.push(`溢价\t${formatPrice(data.iopv * multiplier, precision)}(${formatPercent(premium)})`);
+    if (data.iopvStale) {
+      lines.push('⚠️ IOPV 暂时无法刷新，溢价率按最近一次成功数据计算');
+    }
   }
 
   lines.push(`时间\t${formatCstTime(data.time)}`);

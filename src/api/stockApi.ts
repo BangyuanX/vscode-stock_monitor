@@ -9,6 +9,14 @@ const BINANCE_BATCH_SIZE = 20;
 const BINANCE_KLINE_CONCURRENCY = 5;
 const BINANCE_KLINE_CACHE_MS = 60_000;
 const BINANCE_TICKER_STALE_MS = 10 * 60_000;
+const IOPV_STALE_MS = 10 * 60_000;
+
+interface IopvResult {
+  value: number;
+  stale?: boolean;
+}
+
+const iopvCache = new Map<string, { value: number; cachedAt: number }>();
 
 function chunkArray<T>(items: readonly T[], size: number): T[][] {
   const chunks: T[][] = [];
@@ -590,7 +598,7 @@ async function fetchFromBinance(symbols: string[]): Promise<Map<string, StockDat
  * 从交易所官方 API 获取 ETF 实时参考净值（IOPV）
  * 仅支持深交所（sz 前缀），返回 netValue 字段
  */
-async function fetchIopv(code: string): Promise<number | null> {
+async function fetchIopv(code: string): Promise<IopvResult | null> {
   try {
     const numCode = code.replace(/^(sh|sz|bj)/, '');
     // 仅深交所支持
@@ -602,6 +610,7 @@ async function fetchIopv(code: string): Promise<number | null> {
       {
         useTls: true,
         timeoutMs: 5000,
+        resolveDns: true,
         headers: {
           'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
           'Referer': 'https://www.szse.cn/market/trend/index.html',
@@ -613,13 +622,20 @@ async function fetchIopv(code: string): Promise<number | null> {
     const parsed = JSON.parse(resp.text);
     const netValue = parsed?.data?.netValue;
     if (netValue && parseFloat(netValue) > 0) {
-      return parseFloat(netValue);
+      const value = parseFloat(netValue);
+      iopvCache.set(code, { value, cachedAt: Date.now() });
+      return { value };
     }
-    return null;
   } catch (err) {
     console.log(`[StockBar] IOPV 获取失败 (${code}):`, err);
-    return null;
   }
+
+  const cached = iopvCache.get(code);
+  if (cached && Date.now() - cached.cachedAt <= IOPV_STALE_MS) {
+    return { value: cached.value, stale: true };
+  }
+  if (cached) iopvCache.delete(code);
+  return null;
 }
 
 // ============================================================
@@ -631,7 +647,7 @@ async function fetchIopv(code: string): Promise<number | null> {
  *
  * - sh/sz/bj/hk/usr_/fx_ → 新浪 HTTPS（统一数据源）
  * - 其他（BTC/USDT、MUBUSDT 等）→ Binance data-api
- * - premiumCodes 中的代码额外从东财获取 IOPV（溢价率用）
+ * - premiumCodes 中的代码额外从深交所获取 IOPV（溢价率用）
  *
  * @param codes 股票代码数组
  * @param premiumCodes 需要显示溢价率的代码列表
@@ -667,14 +683,15 @@ export async function fetchStocks(codes: string[], premiumCodes?: string[]): Pro
     if (data) result.set(originalCode, { ...data, code: originalCode });
   }
 
-  // 用户指定的 ETF 溢价率代码：从东方财富获取 IOPV
+  // 用户指定的 ETF 溢价率代码：从深交所获取 IOPV
   if (premiumCodes && premiumCodes.length > 0) {
     for (const code of premiumCodes) {
       const stock = result.get(code);
       if (!stock || stock.error) continue; // 没有行情数据则跳过
       const iopv = await fetchIopv(code);
-      if (iopv && iopv > 0) {
-        stock.iopv = iopv;
+      if (iopv) {
+        stock.iopv = iopv.value;
+        stock.iopvStale = iopv.stale;
       }
     }
   }
