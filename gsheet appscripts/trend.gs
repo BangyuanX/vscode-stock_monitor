@@ -1,5 +1,5 @@
 /**
- * A股 / ETF / 场内基金 / 国债逆回购 / 币安现货 / 美股与美股ETF 行情更新脚本
+ * A股 / ETF / 场内基金 / 场外开放式基金 / 国债逆回购 / 币安现货 / 美股与美股ETF 行情更新脚本
  *
  * v4 说明：
  * 1. 删除合约行情：BTC/USDT:USDT、BTC/USD:BTC 等输入会被标记为“合约行情已删除”。
@@ -12,23 +12,27 @@
  * 5. A股 / ETF / 场内基金尚未开市或停牌时，如果新浪最新价为0、昨收有效，
  *    最新价暂按昨收写入，涨跌幅记为0，避免下游盈亏公式产生虚假亏损。
  *
- * A列输入规范：
+ * 输入规范：A列填写统一代码；中国证券使用 Tushare 风格市场后缀。
  *
  * 1. A股 / ETF / 国债逆回购：
- *    只写6位数字
+ *    使用 6 位代码 + 市场后缀
  *    示例：
- *    600519
- *    510300
- *    204001
+ *    600519.SH
+ *    510300.SH
+ *    159915.SZ
  *
- * 2. 币安现货，使用 CCXT spot symbol：
+ *    场外开放式基金使用 .OF 后缀。
+ *    示例：
+ *    016452.OF
+ *
+ * 2. 币安现货使用 CCXT spot symbol：
  *    BASE/QUOTE
  *    示例：
  *    BTC/USDT
  *    BNB/USDT
  *    MUBARAK/USDT
  *
- * 3. 美股 / 美股ETF：
+ * 3. 美股 / 美股ETF 直接写 ticker：
  *    直接写 ticker
  *    示例：
  *    MRVL
@@ -42,7 +46,7 @@
  *
  * 表格用法：
  * 1. 工作表名称为「行情」
- * 2. A列从第2行开始填写代码
+ * 2. A列从第2行开始填写统一代码
  * 3. 首次运行 setupSheet()
  * 4. 手动运行 updateMarketQuotes()
  * 5. 需要自动刷新时，运行 createOneMinuteTrigger()
@@ -76,6 +80,39 @@ const CONFIG = {
   STOOQ_QUOTE_URL: 'https://stooq.com/q/l/'
 };
 
+// 已知基金只作为名称兜底；.OF 后缀负责识别场外基金。
+// 新基金无需再修改代码。未知名称会优先从 Tushare fund_basic 动态补全。
+const OPEN_FUND_META = {
+  '016452': {
+    name: '南方纳斯达克100指数发起(QDII)A',
+    marketName: '场外公募基金(QDII)'
+  },
+  '022951': {
+    name: '华泰柏瑞中证红利低波ETF联接Y',
+    marketName: '场外公募基金（个人养老金Y类）'
+  }
+};
+
+const OPEN_FUND_NAV_CONFIG = {
+  EASTMONEY_HISTORY_URL: 'https://api.fund.eastmoney.com/f10/lsjz',
+  EASTMONEY_REFERER: 'https://fundf10.eastmoney.com/',
+  META_CACHE_KEY_PREFIX: 'OPEN_FUND_META_'
+};
+
+// 行情页本身就是最后一次成功净值的持久副本，无需再为每只基金创建 Script Property。
+let OPEN_FUND_NAV_FALLBACK = {};
+
+function cleanupLegacyOpenFundNavProperties() {
+  const properties = PropertiesService.getScriptProperties();
+  const all = properties.getProperties();
+
+  Object.keys(all).forEach(key => {
+    if (key.indexOf('OPEN_FUND_NAV_') === 0) {
+      properties.deleteProperty(key);
+    }
+  });
+}
+
 const HEADERS = [
   '输入代码',
   '标准代码',
@@ -93,8 +130,8 @@ const HEADERS = [
   '脚本刷新时间'
 ];
 
-// 旧版最多到 S 列。缩表后清理多余旧列，避免残留“盘前价/盘后价/成交量/成交额”等旧数据。
-const LEGACY_MAX_COLUMNS = 19;
+// 历史版本最多使用到 T 列。
+const LEGACY_MAX_COLUMNS = 20;
 
 // B列开始的输出字段顺序，必须与 HEADERS 第2列起保持一致
 const OUTPUT_FIELDS = [
@@ -148,7 +185,7 @@ function updateMarketQuotes() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(CONFIG.SHEET_NAME) || ss.getActiveSheet();
 
-  ensureHeaders_(sheet);
+  ensureQuoteHeaders_(sheet);
 
   const lastRow = sheet.getLastRow();
 
@@ -163,12 +200,14 @@ function updateMarketQuotes() {
     .getRange(CONFIG.START_ROW, CONFIG.CODE_COL, numRows, 1)
     .getDisplayValues()
     .map(row => row[0]);
+  seedOpenFundNavFallbackFromSheet_(sheet, numRows);
 
   const instruments = rawCodes.map(code => resolveInstrument_(code));
 
   const sinaCodes = [];
   const binanceSpotInstruments = [];
   const yahooInstruments = [];
+  const openFundInstruments = [];
 
   instruments.forEach(inst => {
     if (!inst) {
@@ -186,14 +225,19 @@ function updateMarketQuotes() {
     if (inst.source === 'YAHOO_US') {
       yahooInstruments.push(inst);
     }
+
+    if (inst.source === 'OPEN_FUND_NAV') {
+      openFundInstruments.push(inst);
+    }
   });
 
   const sinaQuoteMap = fetchSinaQuotes_([...new Set(sinaCodes)]);
   const binanceQuoteMap = fetchBinanceSpotQuotes_(binanceSpotInstruments);
   const yahooQuoteMap = fetchYahooQuotes_(yahooInstruments);
+  const openFundQuoteMap = fetchOpenFundNavQuotes_(openFundInstruments);
 
   const now = new Date();
-  const outputWidth = HEADERS.length - 1;
+  const outputWidth = OUTPUT_FIELDS.length;
 
   const rows = instruments.map((inst, index) => {
     const rawCode = String(rawCodes[index] || '').trim();
@@ -226,6 +270,10 @@ function updateMarketQuotes() {
 
     if (inst.source === 'YAHOO_US') {
       quote = yahooQuoteMap[inst.key];
+    }
+
+    if (inst.source === 'OPEN_FUND_NAV') {
+      quote = openFundQuoteMap[inst.key];
     }
 
     if (!quote) {
@@ -280,6 +328,11 @@ function onOpen() {
     .addItem('立即刷新行情', 'updateMarketQuotes')
     .addItem('创建每分钟刷新', 'createOneMinuteTrigger')
     .addItem('删除自动刷新', 'deleteQuoteTriggers')
+    .addSeparator()
+    .addItem('初始化分红监控', 'setupDividendMonitoring')
+    .addItem('立即同步分红', 'syncDividendsDaily')
+    .addItem('创建每日分红检查', 'createDailyDividendTrigger')
+    .addItem('删除分红检查', 'deleteDividendTriggers')
     .addToUi();
 }
 
@@ -287,28 +340,22 @@ function onOpen() {
  * 识别输入代码
  */
 function resolveInstrument_(input) {
-  const raw = String(input || '').trim();
+  const raw = String(input || '').trim().toUpperCase();
 
   if (!raw) {
     return null;
   }
 
-  // A股 / ETF / 国债逆回购：只接受6位数字
-  if (/^\d{6}$/.test(raw)) {
-    const sinaCode = inferSinaCodeBySixDigit_(raw);
+  const openFund = parseOpenFund_(raw);
 
-    if (!sinaCode) {
-      return null;
-    }
+  if (openFund) {
+    return openFund;
+  }
 
-    return {
-      source: 'SINA',
-      key: sinaCode,
-      apiSymbol: sinaCode,
-      standardCode: raw,
-      displayName: '',
-      marketName: 'A股/基金/债券'
-    };
+  // A股 / ETF / 国债逆回购：统一使用 .SH / .SZ / .BJ。
+  // 暂时兼容旧的六位代码，便于迁移期间不中断行情。
+  if (/^\d{6}\.(SH|SZ|BJ)$/.test(raw) || /^\d{6}$/.test(raw)) {
+    return parseSinaInstrument_(raw);
   }
 
   // CCXT风格：
@@ -346,6 +393,72 @@ function resolveInstrument_(input) {
   }
 
   return null;
+}
+
+function parseSinaInstrument_(raw) {
+  const input = String(raw || '').trim().toUpperCase();
+  const explicit = input.match(/^(\d{6})\.(SH|SZ|BJ)$/);
+  const code = explicit ? explicit[1] : input;
+  const market = explicit ? explicit[2] : '';
+  const sinaCode = explicit
+    ? market.toLowerCase() + code
+    : (/^\d{6}$/.test(code) ? inferSinaCodeBySixDigit_(code) : null);
+
+  if (!sinaCode) {
+    return null;
+  }
+
+  const suffix = market || sinaCode.slice(0, 2).toUpperCase();
+
+  return {
+    source: 'SINA',
+    key: sinaCode,
+    apiSymbol: sinaCode,
+    standardCode: code + '.' + suffix,
+    displayName: '',
+    marketName: 'A股/基金/债券'
+  };
+}
+
+/**
+ * 解析显式登记的场外开放式基金。
+ */
+function parseOpenFund_(input) {
+  const raw = String(input || '').trim().toUpperCase();
+  const match = raw.match(/^(\d{6})\.OF$/);
+
+  if (match) {
+    return makeOpenFundInstrument_(raw);
+  }
+
+  const meta = OPEN_FUND_META[raw];
+
+  if (!meta) {
+    return null;
+  }
+
+  return makeOpenFundInstrument_(raw);
+}
+
+function makeOpenFundInstrument_(input) {
+  const raw = String(input || '').trim().toUpperCase();
+  const match = raw.match(/^(\d{6})(?:\.OF)?$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const code = match[1];
+  const meta = OPEN_FUND_META[code] || {};
+
+  return {
+    source: 'OPEN_FUND_NAV',
+    key: 'OPEN_FUND_NAV:' + code,
+    apiSymbol: code,
+    standardCode: code + '.OF',
+    displayName: meta.name || '',
+    marketName: meta.marketName || '场外公募基金'
+  };
 }
 
 /**
@@ -1233,6 +1346,320 @@ function parseSinaResponse_(text) {
 }
 
 /**
+ * 批量获取场外开放式基金最近两期正式单位净值。
+ *
+ * 不使用盘中估值。接口失败时回退到行情页中最近一次成功净值，
+ * 避免下游市值和总资产因为临时网络故障被写成0。
+ */
+function fetchOpenFundNavQuotes_(instruments) {
+  const map = {};
+
+  if (!instruments || instruments.length === 0) {
+    return map;
+  }
+
+  instruments.forEach(hydrateOpenFundMetadata_);
+
+  const uniqueByCode = {};
+
+  instruments.forEach(inst => {
+    if (inst && inst.apiSymbol) {
+      uniqueByCode[inst.apiSymbol] = inst;
+    }
+  });
+
+  const codes = Object.keys(uniqueByCode);
+  const requests = codes.map(code => ({
+    url: buildOpenFundNavUrl_(code),
+    method: 'get',
+    muteHttpExceptions: true,
+    headers: {
+      Referer: OPEN_FUND_NAV_CONFIG.EASTMONEY_REFERER,
+      'User-Agent': 'Mozilla/5.0',
+      Accept: 'application/json,text/plain,*/*'
+    }
+  }));
+
+  let responses = [];
+
+  try {
+    responses = UrlFetchApp.fetchAll(requests);
+  } catch (err) {
+    codes.forEach(code => {
+      const inst = uniqueByCode[code];
+      map[inst.key] = getCachedOpenFundNavQuote_(inst, '基金净值批量请求失败：' + String(err));
+    });
+    return map;
+  }
+
+  responses.forEach((response, index) => {
+    const code = codes[index];
+    const inst = uniqueByCode[code];
+    const statusCode = response.getResponseCode();
+    let quote = null;
+    let errorMessage = '';
+
+    if (statusCode === 200) {
+      const data = safeJsonParse_(response.getContentText());
+      quote = parseOpenFundNavResponse_(data, inst);
+
+      if (!quote) {
+        errorMessage = '基金净值返回无法解析或缺少最近两期净值';
+      }
+    } else {
+      errorMessage = '基金净值请求失败：HTTP ' + statusCode;
+    }
+
+    if (quote) {
+      saveOpenFundNavQuote_(inst, quote);
+      map[inst.key] = quote;
+      return;
+    }
+
+    map[inst.key] = getCachedOpenFundNavQuote_(inst, errorMessage);
+  });
+
+  return map;
+}
+
+function buildOpenFundNavUrl_(code) {
+  return (
+    OPEN_FUND_NAV_CONFIG.EASTMONEY_HISTORY_URL +
+    '?fundCode=' +
+    encodeURIComponent(code) +
+    '&pageIndex=1&pageSize=2&_=' +
+    new Date().getTime()
+  );
+}
+
+/**
+ * 解析东方财富历史净值接口。
+ * FSRQ=净值日期，DWJZ=单位净值，JZZZL=日增长率（百分数文本）。
+ */
+function parseOpenFundNavResponse_(data, inst) {
+  const list =
+    data && data.ErrCode === 0 && data.Data && Array.isArray(data.Data.LSJZList)
+      ? data.Data.LSJZList
+      : [];
+
+  const valid = list
+    .map(item => ({
+      date: String(item && item.FSRQ ? item.FSRQ : '').trim(),
+      nav: toNumber_(item && item.DWJZ),
+      changePctText: item && item.JZZZL
+    }))
+    .filter(item => /^\d{4}-\d{2}-\d{2}$/.test(item.date) && isFiniteNumber_(item.nav) && item.nav > 0);
+
+  if (valid.length < 2) {
+    return null;
+  }
+
+  const latest = valid[0];
+  const previous = valid[1];
+  const apiChangePct = toNumber_(latest.changePctText);
+  const changePct = isFiniteNumber_(apiChangePct)
+    ? apiChangePct / 100
+    : (latest.nav - previous.nav) / previous.nav;
+
+  return {
+    name: inst.displayName,
+    marketName: inst.marketName,
+    phase: openFundPhase_('已公布净值', inst),
+    price: latest.nav,
+    change: latest.nav - previous.nav,
+    changePct,
+    open: '',
+    prevClose: previous.nav,
+    high: '',
+    low: '',
+    volume: '',
+    amount: '',
+    preMarketPrice: '',
+    postMarketPrice: '',
+    quoteTime: dateTextToShanghaiDate_(latest.date),
+    status: 'OK；正式单位净值；非盘中估值；净值日期=' + latest.date
+  };
+}
+
+function dateTextToShanghaiDate_(text) {
+  const match = String(text || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (!match) {
+    return '';
+  }
+
+  return new Date(match[1] + '-' + match[2] + '-' + match[3] + 'T00:00:00+08:00');
+}
+
+function saveOpenFundNavQuote_(inst, quote) {
+  OPEN_FUND_NAV_FALLBACK[inst.standardCode] = {
+    price: quote.price,
+    changePct: quote.changePct,
+    prevClose: quote.prevClose,
+    quoteTime: quote.quoteTime
+  };
+}
+
+function seedOpenFundNavFallbackFromSheet_(sheet, numRows) {
+  OPEN_FUND_NAV_FALLBACK = {};
+
+  if (!sheet || !(numRows > 0)) return;
+
+  const rows = sheet
+    .getRange(CONFIG.START_ROW, CONFIG.OUTPUT_START_COL, numRows, OUTPUT_FIELDS.length)
+    .getValues();
+
+  rows.forEach(row => {
+    const code = String(row[0] || '').trim();
+    const price = toNumber_(row[4]);
+    const prevClose = toNumber_(row[7]);
+
+    if (!/^\d{6}\.OF$/.test(code) || !isFiniteNumber_(price) || price <= 0 ||
+        !isFiniteNumber_(prevClose) || prevClose <= 0) {
+      return;
+    }
+
+    OPEN_FUND_NAV_FALLBACK[code] = {
+      price,
+      changePct: toNumber_(row[5]),
+      prevClose,
+      quoteTime: row[10]
+    };
+  });
+}
+
+function hydrateOpenFundMetadata_(inst) {
+  if (!inst || inst.displayName) {
+    return inst;
+  }
+
+  const cached = getCachedOpenFundMeta_(inst.standardCode);
+
+  if (cached) {
+    inst.displayName = cached.name || '';
+    inst.marketName = cached.marketName || inst.marketName;
+    return inst;
+  }
+
+  const fetched = fetchOpenFundMetaFromTushare_(inst.apiSymbol);
+
+  if (fetched) {
+    inst.displayName = fetched.name || '';
+    inst.marketName = fetched.marketName || inst.marketName;
+    saveOpenFundMeta_(inst.standardCode, fetched);
+  }
+
+  return inst;
+}
+
+function fetchOpenFundMetaFromTushare_(code) {
+  try {
+    if (typeof PropertiesService === 'undefined' || typeof UrlFetchApp === 'undefined') {
+      return null;
+    }
+
+    const token = PropertiesService.getScriptProperties().getProperty('TUSHARE_TOKEN');
+
+    if (!token) {
+      return null;
+    }
+
+    const response = UrlFetchApp.fetch('https://api.tushare.pro', {
+      method: 'post',
+      contentType: 'application/json',
+      muteHttpExceptions: true,
+      payload: JSON.stringify({
+        api_name: 'fund_basic',
+        token,
+        params: { ts_code: String(code) + '.OF', market: 'O', status: 'L' },
+        fields: 'ts_code,name,market,status,fund_type,type'
+      })
+    });
+
+    if (response.getResponseCode() !== 200) {
+      return null;
+    }
+
+    const data = safeJsonParse_(response.getContentText());
+    const fields = data && data.data && Array.isArray(data.data.fields) ? data.data.fields : [];
+    const items = data && data.data && Array.isArray(data.data.items) ? data.data.items : [];
+
+    if (!items.length) {
+      return null;
+    }
+
+    const nameIndex = fields.indexOf('name');
+    const name = nameIndex >= 0 ? String(items[0][nameIndex] || '').trim() : '';
+
+    return name ? { name, marketName: '场外公募基金' } : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function saveOpenFundMeta_(code, meta) {
+  try {
+    PropertiesService.getScriptProperties().setProperty(
+      OPEN_FUND_NAV_CONFIG.META_CACHE_KEY_PREFIX + code,
+      JSON.stringify(meta)
+    );
+  } catch (err) {
+    // 名称缓存失败不影响净值刷新。
+  }
+}
+
+function getCachedOpenFundMeta_(code) {
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(
+      OPEN_FUND_NAV_CONFIG.META_CACHE_KEY_PREFIX + code
+    );
+    return raw ? safeJsonParse_(raw) : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function openFundPhase_(base, inst) {
+  return String(inst && inst.marketName || '').indexOf('QDII') >= 0 ? base + '(QDII)' : base;
+}
+
+function getCachedOpenFundNavQuote_(inst, reason) {
+  try {
+    const cached = OPEN_FUND_NAV_FALLBACK[inst.standardCode] || null;
+    const price = cached ? toNumber_(cached.price) : '';
+    const prevClose = cached ? toNumber_(cached.prevClose) : '';
+
+    if (!isFiniteNumber_(price) || price <= 0 || !isFiniteNumber_(prevClose) || prevClose <= 0) {
+      return makeErrorQuote_(inst, reason);
+    }
+
+    const changePct = toNumber_(cached.changePct);
+    const quoteTime = cached.quoteTime ? new Date(cached.quoteTime) : '';
+
+    return {
+      name: inst.displayName,
+      marketName: inst.marketName,
+      phase: openFundPhase_('上次表格净值', inst),
+      price,
+      change: price - prevClose,
+      changePct: isFiniteNumber_(changePct) ? changePct : (price - prevClose) / prevClose,
+      open: '',
+      prevClose,
+      high: '',
+      low: '',
+      volume: '',
+      amount: '',
+      preMarketPrice: '',
+      postMarketPrice: '',
+      quoteTime: quoteTime instanceof Date && !isNaN(quoteTime.getTime()) ? quoteTime : '',
+      status: '基金净值暂时无法刷新，沿用行情页最近一次成功数据；' + String(reason || '接口无数据')
+    };
+  } catch (err) {
+    return makeErrorQuote_(inst, reason);
+  }
+}
+
+/**
  * 生成错误行情对象
  */
 function makeErrorQuote_(inst, status) {
@@ -1287,7 +1714,9 @@ function makeOutputRow_(inst, quote, refreshTime) {
  * 注意：
  * 这里不会自动调整列宽。
  */
-function ensureHeaders_(sheet) {
+// Apps Script 项目内所有 .gs 文件共享全局命名空间。
+// 使用行情专属名称，避免与“每日总资产.gs”的 ensureHeaders_ 冲突。
+function ensureQuoteHeaders_(sheet) {
   const currentHeaders = sheet.getRange(1, 1, 1, HEADERS.length).getValues()[0];
   const needSetup = HEADERS.some((header, i) => currentHeaders[i] !== header);
 
