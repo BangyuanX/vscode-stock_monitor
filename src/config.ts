@@ -41,9 +41,16 @@ export function readConfig(): AppConfig {
   const fallColor = config.get<string>('fallColor', '#4a9e4a');
   const flatColor = config.get<string>('flatColor', '');
   const precision = config.get<Record<string, number>>('precision', {});
+  const rawAliases = config.get<Record<string, string>>('aliases', {});
   const defaultPrecisionVal = precision['default'] ?? -1;
   const premiumCodes = config.get<string[]>('premiumCodes', []);
   const priceScale = config.get<Record<string, number>>('scale', {});
+  const aliases: Record<string, string> = {};
+  for (const [rawCode, rawAlias] of Object.entries(rawAliases)) {
+    const code = normalizeConfiguredCode(rawCode);
+    const alias = typeof rawAlias === 'string' ? rawAlias.trim() : '';
+    if (code && alias) aliases[code] = alias;
+  }
 
   // 所有代码统一走 stockCodes
   // 推荐格式：usr_NVDA（新浪美股）、BTC/USDT（Binance 加密货币/美股代币）
@@ -68,6 +75,7 @@ export function readConfig(): AppConfig {
     fallColor,
     flatColor,
     precision,
+    aliases,
     defaultPrecision: defaultPrecisionVal,
     premiumCodes,
     priceScale,

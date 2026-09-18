@@ -5,7 +5,7 @@ import {
   calculateRangeReferencePosition,
   comparePriceToBasis,
 } from '../dayRange';
-import { buildTooltip, formatChange, formatPercent } from '../types';
+import { buildTooltip, formatChange, formatPercent, formatTicker } from '../types';
 import { parseSinaCnFields } from './sinaCn';
 
 function createCnFields(overrides: Record<number, string> = {}): string[] {
@@ -46,6 +46,19 @@ test('A 股正常行情保留最新价和涨跌额', () => {
   assert.match(stalePremiumTooltip, /溢价\t10\.000\(\+2\.00%\)/);
   assert.match(stalePremiumTooltip, /IOPV 暂时无法刷新，溢价率按最近一次成功数据计算/);
 
+});
+
+test('自定义简称只改变展示名称，详情保留原名和代码', () => {
+  const data = parseSinaCnFields('sh600000', createCnFields());
+  assert.ok(data);
+
+  const display = formatTicker(data, undefined, undefined, '浦发');
+  assert.equal(display.name, '浦发');
+  assert.equal(display.code, 'sh600000');
+
+  const tooltip = buildTooltip(data, undefined, undefined, '浦发');
+  assert.match(tooltip, /^浦发（sh600000）/m);
+  assert.match(tooltip, /原名\t测试股票/);
 });
 
 test('A 股最新价为 0 时按昨收显示并将涨跌归零', () => {

@@ -2,7 +2,7 @@
   "name": "stock-bar-monitor",
   "displayName": "Stock Bar Monitor",
   "description": "轻量级股票/加密货币状态栏监控",
-  "version": "0.7.28",
+  "version": "0.7.31",
   "publisher": "bangyuan",
   "license": "MIT",
   "engines": {
@@ -40,6 +40,11 @@
         "command": "stock-bar.managePrecision",
         "title": "Stock Bar: 设置标的小数位数",
         "icon": "$(symbol-numeric)"
+      },
+      {
+        "command": "stock-bar.manageAlias",
+        "title": "Stock Bar: 设置标的简称",
+        "icon": "$(edit)"
       },
       {
         "command": "stock-bar.syncNow",
@@ -90,9 +95,14 @@
           "group": "2_configure@1"
         },
         {
-          "command": "stock-bar.syncNow",
+          "command": "stock-bar.manageAlias",
           "when": "view == stock-bar.watchlist",
           "group": "2_configure@2"
+        },
+        {
+          "command": "stock-bar.syncNow",
+          "when": "view == stock-bar.watchlist",
+          "group": "2_configure@3"
         }
       ]
     },
@@ -143,6 +153,15 @@
           "description": "每个品种的小数点位数覆盖。可点击侧边栏价格进行设置；用 \"default\" 设置全局默认值。示例：{\"sh000001\": 2, \"BTC/USDT\": 0, \"fx_sjpycnh\": 4, \"default\": 2}",
           "additionalProperties": {
             "type": "number"
+          }
+        },
+        "stock-bar.aliases": {
+          "type": "object",
+          "ignoreSync": true,
+          "default": {},
+          "description": "每个标的的自定义简称，用于状态栏和侧边栏的 ${name} 显示。示例：{\"sh000001\": \"上证\", \"hk00700\": \"腾讯\"}",
+          "additionalProperties": {
+            "type": "string"
           }
         },
         "stock-bar.maxItems": {

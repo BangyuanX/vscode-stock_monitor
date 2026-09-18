@@ -68,6 +68,7 @@ export interface SidebarActions {
     position: 'before' | 'after',
   ): Promise<void>;
   setPrecision(code: string): Promise<void>;
+  setAlias(code: string): Promise<void>;
 }
 
 /** 使用 Webview 实现严格双列布局、行内图钉和拖拽排序。 */
@@ -127,6 +128,11 @@ export class SidebarManager implements vscode.WebviewViewProvider, vscode.Dispos
             await this.actions.setPrecision(message.code);
           }
           break;
+        case 'alias':
+          if (typeof message.code === 'string') {
+            await this.actions.setAlias(message.code);
+          }
+          break;
       }
     });
     webviewView.onDidDispose(() => {
@@ -157,7 +163,8 @@ export class SidebarManager implements vscode.WebviewViewProvider, vscode.Dispos
       const configuredPrecision = config.precision[code] ?? config.defaultPrecision;
       const precision = configuredPrecision >= 0 ? configuredPrecision : undefined;
       const scale = config.priceScale[code] || 1;
-      const display = formatTicker(data, precision, scale);
+      const alias = config.aliases[code];
+      const display = formatTicker(data, precision, scale, alias);
       const current = data.price * scale;
       const low = data.low * scale;
       const high = data.high * scale;
@@ -176,7 +183,7 @@ export class SidebarManager implements vscode.WebviewViewProvider, vscode.Dispos
         : calculateDayRangePosition(current, low, high);
       items.push({
         code,
-        name: data.name || code,
+        name: display.name || code,
         price: data.error ? '—' : display.price,
         percent: data.error ? '' : display.percent,
         trend: data.error
@@ -190,7 +197,7 @@ export class SidebarManager implements vscode.WebviewViewProvider, vscode.Dispos
         pinned: pinnedCodes.has(code),
         tooltip: data.error
           ? `${code}: ${data.error}\n下次刷新自动重试`
-          : buildTooltip(data, precision, scale),
+          : buildTooltip(data, precision, scale, alias),
         dayRange: rangePosition === undefined
           ? undefined
           : {
@@ -373,6 +380,15 @@ export function getWebviewHtml(
       align-items: center;
       overflow: hidden;
       white-space: nowrap;
+    }
+    .name-button {
+      padding: 0;
+      border: 0;
+      color: inherit;
+      background: transparent;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
     }
     .name-text {
       min-width: 0;
@@ -901,6 +917,12 @@ export function getWebviewHtml(
           vscode.postMessage({ type: 'precision', code: button.dataset.code });
         });
       });
+      document.querySelectorAll('.name-button').forEach(button => {
+        button.addEventListener('click', event => {
+          event.stopPropagation();
+          vscode.postMessage({ type: 'alias', code: button.dataset.code });
+        });
+      });
       document.querySelectorAll('.drag-handle').forEach(handle => {
         handle.addEventListener('dragstart', event => {
           draggedCode = handle.dataset.code;
@@ -980,7 +1002,7 @@ export function getWebviewHtml(
         for (const item of group.items) {
           const code = escapeHtml(item.code);
           html += '<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="' + code + '" data-category="' + escapeHtml(group.category) + '" data-trend="' + item.trend + '" data-tooltip="' + escapeHtml(item.tooltip) + '" data-range="' + escapeHtml(item.dayRange ? JSON.stringify(item.dayRange) : '') + '">';
-          html += '<span class="name"><span class="name-text">' + escapeHtml(item.name) + '</span>' + (item.delayed ? '<span class="delay-badge" title="延迟行情（通常至少延迟约 15 分钟）">D</span>' : '') + '</span>';
+          html += '<button class="name name-button" data-code="' + code + '" title="设置标的简称" aria-label="设置 ' + escapeHtml(item.name) + ' 的简称"><span class="name-text">' + escapeHtml(item.name) + '</span>' + (item.delayed ? '<span class="delay-badge" title="延迟行情（通常至少延迟约 15 分钟）">D</span>' : '') + '</button>';
           html += '<button class="price" data-code="' + code + '" title="设置小数位数"><span class="current-price">' + escapeHtml(item.price) + '</span><span class="percent ' + item.trend + '">' + (item.percent ? '(' + escapeHtml(item.percent) + ')' : '') + '</span></button>';
           html += '<button class="icon-button pin-button' + (item.pinned ? ' pinned' : '') + '" data-code="' + code + '" title="' + (item.pinned ? '状态栏：已显示（点击移除）' : '状态栏：未显示（点击固定）') + '" aria-label="切换状态栏显示" aria-pressed="' + item.pinned + '">' + (item.pinned ? pinOnSvg : pinOffSvg) + '</button>';
           html += '<span class="drag-handle" draggable="true" data-code="' + code + '" data-category="' + escapeHtml(group.category) + '" title="按住并拖动排序" role="button" aria-label="拖动排序">' + dragSvg + '</span>';
@@ -1039,7 +1061,7 @@ function renderPayloadHtml(payload: SidebarPayload): string {
     for (const item of group.items) {
       const code = escapeHtml(item.code);
       html += `<div class="ticker-row" tabindex="0" aria-describedby="stock-tooltip" data-code="${code}" data-category="${escapeHtml(group.category)}" data-trend="${item.trend}" data-tooltip="${escapeHtml(item.tooltip)}" data-range="${escapeHtml(item.dayRange ? JSON.stringify(item.dayRange) : '')}">`;
-      html += `<span class="name"><span class="name-text">${escapeHtml(item.name)}</span>${item.delayed ? '<span class="delay-badge" title="延迟行情（通常至少延迟约 15 分钟）">D</span>' : ''}</span>`;
+      html += `<button class="name name-button" data-code="${code}" title="设置标的简称" aria-label="设置 ${escapeHtml(item.name)} 的简称"><span class="name-text">${escapeHtml(item.name)}</span>${item.delayed ? '<span class="delay-badge" title="延迟行情（通常至少延迟约 15 分钟）">D</span>' : ''}</button>`;
       html += `<button class="price" data-code="${code}" title="设置小数位数"><span class="current-price">${escapeHtml(item.price)}</span><span class="percent ${item.trend}">${item.percent ? `(${escapeHtml(item.percent)})` : ''}</span></button>`;
       html += `<button class="icon-button pin-button${item.pinned ? ' pinned' : ''}" data-code="${code}" title="${item.pinned ? '状态栏：已显示（点击移除）' : '状态栏：未显示（点击固定）'}" aria-label="切换状态栏显示" aria-pressed="${item.pinned}">${item.pinned ? pinOnSvg : pinOffSvg}</button>`;
       html += `<span class="drag-handle" draggable="true" data-code="${code}" data-category="${escapeHtml(group.category)}" title="按住并拖动排序" role="button" aria-label="拖动排序">${dragSvg}</span>`;

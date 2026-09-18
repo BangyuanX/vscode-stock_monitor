@@ -37,6 +37,7 @@ export function activate(context: vscode.ExtensionContext) {
     removeTicker: removeTickerFromSidebar,
     moveTicker: moveTickerRelative,
     setPrecision: managePrecision,
+    setAlias: manageAlias,
   });
 
   // 注册命令
@@ -100,6 +101,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('stock-bar.managePrecision', () => managePrecision()),
+    vscode.commands.registerCommand('stock-bar.manageAlias', () => manageAlias()),
     vscode.commands.registerCommand('stock-bar.syncNow', () => syncStateManager.syncNow()),
   );
 
@@ -307,6 +309,52 @@ async function managePrecision(selectedCode?: string): Promise<void> {
   );
 }
 
+async function manageAlias(selectedCode?: string): Promise<void> {
+  let code = selectedCode;
+  if (!code) {
+    const config = readConfig();
+    const items: CodeQuickPickItem[] = getSidebarOrderedCodes(config).map(itemCode => {
+      const sourceName = latestDataByCode.get(itemCode)?.name || itemCode;
+      const alias = config.aliases[itemCode];
+      return {
+        label: alias || sourceName,
+        description: alias ? `${itemCode} · ${sourceName}` : itemCode,
+        code: itemCode,
+      };
+    });
+    const selected = await vscode.window.showQuickPick(items, {
+      matchOnDescription: true,
+      placeHolder: '选择要设置简称的标的',
+    });
+    if (!selected) return;
+    code = selected.code;
+  }
+
+  const config = readConfig();
+  const sourceName = latestDataByCode.get(code)?.name || code;
+  const currentAlias = config.aliases[code] || '';
+  const value = await vscode.window.showInputBox({
+    title: `设置 ${sourceName}（${code}）的简称`,
+    prompt: '简称将用于状态栏和侧边栏；清空后恢复原名',
+    value: currentAlias,
+    placeHolder: sourceName,
+    ignoreFocusOut: true,
+    validateInput: input => /[\r\n]/.test(input) ? '简称不能包含换行' : undefined,
+  });
+  if (value === undefined) return;
+
+  const workspaceConfig = vscode.workspace.getConfiguration('stock-bar');
+  const aliases = workspaceConfig.get<Record<string, string>>('aliases', {});
+  const nextAliases = { ...aliases };
+  const alias = value.trim();
+  if (alias) nextAliases[code] = alias;
+  else delete nextAliases[code];
+  await workspaceConfig.update('aliases', nextAliases, vscode.ConfigurationTarget.Global);
+  vscode.window.showInformationMessage(
+    alias ? `「${sourceName}」已设置简称为「${alias}」` : `「${sourceName}」已恢复原名`,
+  );
+}
+
 function renderLatestData(): void {
   const config = readConfig();
   const allData = config.stockCodes.flatMap(code => {
@@ -332,6 +380,7 @@ function applyConfig(context: vscode.ExtensionContext): void {
   statusBarManager.setMaxItems(Number.MAX_SAFE_INTEGER);
   statusBarManager.setPrecision(config.precision, config.defaultPrecision);
   statusBarManager.setScale(config.priceScale);
+  statusBarManager.setAliases(config.aliases);
 
   // 重启轮询（如果间隔变化）
   restartPolling(config.interval);
@@ -344,6 +393,7 @@ function applyConfig(context: vscode.ExtensionContext): void {
     statusBarManager.setMaxItems(Number.MAX_SAFE_INTEGER);
     statusBarManager.setPrecision(newConfig.precision, newConfig.defaultPrecision);
     statusBarManager.setScale(newConfig.priceScale);
+    statusBarManager.setAliases(newConfig.aliases);
     if (event.affectsConfiguration('stock-bar.interval')) {
       restartPolling(newConfig.interval);
     }

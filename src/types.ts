@@ -62,6 +62,7 @@ export interface AppConfig {
   fallColor: string;
   flatColor: string;
   precision: Record<string, number>; // 代码 → 小数位数
+  aliases: Record<string, string>;   // 代码 → 自定义显示名称
   defaultPrecision: number;          // 默认小数位数
   premiumCodes: string[];            // 需要显示 ETF 溢价率的代码列表
   priceScale: Record<string, number>; // 代码 → 显示乘数（如 fx_sjpycnh: 100）
@@ -121,12 +122,17 @@ export function formatPercent(percent: number): string {
 }
 
 /** 格式化所有字段为显示对象 */
-export function formatTicker(data: StockData, precision?: number, scale?: number): TickerDisplay {
+export function formatTicker(
+  data: StockData,
+  precision?: number,
+  scale?: number,
+  displayName?: string,
+): TickerDisplay {
   const multiplier = scale || 1;
   const displayPrice = data.price * multiplier;
   return {
     code: data.code,
-    name: data.name,
+    name: displayName || data.name,
     price: formatPrice(displayPrice, precision),
     change: formatChange(data.change * multiplier),
     percent: formatPercent(data.changePercent),
@@ -183,16 +189,20 @@ function formatCstTime(raw?: string): string {
 }
 
 /** 构建悬停提示文本 */
-export function buildTooltip(data: StockData, precision?: number, scale?: number): string {
+export function buildTooltip(
+  data: StockData,
+  precision?: number,
+  scale?: number,
+  displayName?: string,
+): string {
   const multiplier = scale || 1;
   const change = data.change * multiplier;
   const displayPrice = data.price * multiplier;
   const displayPrecision = resolvePricePrecision(displayPrice, precision);
   const changeSummary = `${formatChange(change, displayPrecision)}(${formatPercent(data.changePercent)})`;
-  const lines = [
-    `${data.name}（${data.code}）`,
-    `---`,
-  ];
+  const resolvedName = displayName || data.name;
+  const lines = [`${resolvedName}（${data.code}）`, `---`];
+  if (resolvedName !== data.name) lines.push(`原名\t${data.name}`);
 
   if (data.delayed) {
     lines.push('🟡 D 延迟行情（通常至少延迟约 15 分钟）');

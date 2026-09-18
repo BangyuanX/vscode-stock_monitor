@@ -4,7 +4,7 @@ import { readConfig } from './config';
 const SYNC_KEY = 'stock-bar.synced-config.v1';
 const LOCAL_APPLIED_KEY = 'stock-bar.synced-config.applied-id';
 const LOCAL_APPLIED_VALUES_KEY = 'stock-bar.synced-config.applied-values';
-const SYNC_VERSION = 5;
+const SYNC_VERSION = 6;
 
 interface SyncedConfigValues {
   codes: string[];
@@ -12,6 +12,7 @@ interface SyncedConfigValues {
   interval: number;
   format: string;
   precision: Record<string, number>;
+  aliases: Record<string, string>;
   maxItems: number;
   riseColor: string;
   fallColor: string;
@@ -33,6 +34,7 @@ const SETTING_KEYS: ReadonlyArray<keyof SyncedConfigValues> = [
   'interval',
   'format',
   'precision',
+  'aliases',
   'maxItems',
   'riseColor',
   'fallColor',
@@ -222,6 +224,7 @@ function readLocalValues(): SyncedConfigValues {
     interval: config.interval,
     format: config.format,
     precision: config.precision,
+    aliases: config.aliases,
     maxItems: config.maxItems,
     riseColor: config.riseColor,
     fallColor: config.fallColor,
@@ -257,6 +260,7 @@ function parseSyncedConfigSnapshot(value: unknown): SyncedConfigSnapshot | undef
       && candidate.version !== 2
       && candidate.version !== 3
       && candidate.version !== 4
+      && candidate.version !== 5
       && candidate.version !== SYNC_VERSION)
     || typeof candidate.id !== 'string'
     || typeof candidate.updatedAt !== 'number'
@@ -271,6 +275,7 @@ function parseSyncedConfigSnapshot(value: unknown): SyncedConfigSnapshot | undef
     && typeof values.interval === 'number'
     && typeof values.format === 'string'
     && typeof values.precision === 'object'
+    && (values.aliases === undefined || typeof values.aliases === 'object')
     && typeof values.maxItems === 'number'
     && typeof values.riseColor === 'string'
     && typeof values.fallColor === 'string'
@@ -288,6 +293,7 @@ function parseSyncedConfigSnapshot(value: unknown): SyncedConfigSnapshot | undef
       interval: values.interval as number,
       format: values.format as string,
       precision: values.precision as Record<string, number>,
+      aliases: (values.aliases ?? {}) as Record<string, string>,
       maxItems: values.maxItems as number,
       riseColor: values.riseColor as string,
       fallColor: values.fallColor as string,

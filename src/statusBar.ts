@@ -15,6 +15,7 @@ export class StatusBarManager {
   private precision: Record<string, number> = {};
   private defaultPrecision: number = -1;
   private priceScale: Record<string, number> = {};
+  private aliases: Record<string, string> = {};
 
   /** 占位状态栏项（加载中提示） */
   private loadingItem?: vscode.StatusBarItem;
@@ -68,6 +69,10 @@ export class StatusBarManager {
     this.priceScale = scale;
   }
 
+  setAliases(aliases: Record<string, string>): void {
+    this.aliases = aliases;
+  }
+
   /**
    * 批量更新状态栏显示
    * @param dataList 行情数据列表
@@ -93,7 +98,7 @@ export class StatusBarManager {
 
       // 获取失败的品种显示错误标记
       if (data.error) {
-        const errorText = `⛔${data.code}`;
+        const errorText = `⛔${this.aliases[data.code] || data.code}`;
         activeCodes.add(data.code);
         this.createOrUpdateItem(
           data.code,
@@ -108,7 +113,7 @@ export class StatusBarManager {
       const prec = this.precision[data.code] ?? this.defaultPrecision;
       const precision = prec >= 0 ? prec : undefined;
       const scale = this.priceScale[data.code] || 1;
-      const display = formatTicker(data, precision, scale);
+      const display = formatTicker(data, precision, scale, this.aliases[data.code]);
       const formattedText = applyFormat(template, display);
       const text = data.stale ? `$(warning) ${formattedText}` : formattedText;
       const color = this.getColor(data.changePercent);
